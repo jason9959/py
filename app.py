@@ -82,6 +82,13 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
 
     st.sidebar.markdown("---")
     
+    # ------------------------------------------
+    # 👉 [위치 변경] 버튼을 비교종목 입력 텍스트 위로 이동
+    # ------------------------------------------
+    run_button = st.sidebar.button("🚀 주가 데이터 조회 및 비교하기", use_container_width=True)
+
+    st.sidebar.markdown("---")
+
     # [STEP 2] 종목 1~10 순서 입력 수집
     st.sidebar.subheader("📈 비교 종목 입력 (최대 10개)")
     
@@ -125,7 +132,8 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     elif not ordered_target_tickers:
         st.warning("최소 1개 이상의 올바른 종목을 입력해 주세요.")
     else:
-        if st.sidebar.button("주가 데이터 조회 및 비교하기"):
+        # 버튼클릭 상태 판단
+        if run_button:
             with st.spinner("Yahoo Finance에서 실시간 데이터를 불러오는 중..."):
                 try:
                     # 1) 전체 종목 데이터 수집
@@ -135,7 +143,7 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                     if isinstance(df_raw, pd.Series):
                         df_raw = df_raw.to_frame(name=ordered_target_tickers[0])
 
-                    # 2) [핵심 fix] yf.download의 알파벳 정렬을 무효화하고 사용자 입력 순서로 강제 고정
+                    # 2) yf.download의 알파벳 정렬을 무효화하고 사용자 입력 순서로 강제 고정
                     existing_in_order = [t for t in ordered_target_tickers if t in df_raw.columns]
                     df_ordered = df_raw[existing_in_order]
 
@@ -143,7 +151,7 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                     common_df = df_ordered.dropna()
 
                     if not common_df.empty and len(common_df) > 0:
-                        final_tickers = list(common_df.columns)  # 종목 1, 종목 2... 순서가 완벽히 보장됨
+                        final_tickers = list(common_df.columns)
                         base_date = common_df.index[0].strftime('%Y-%m-%d')
                         
                         # 4) 첫 거래일 기준 100 지수화
@@ -179,7 +187,7 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                         st.pyplot(fig)
                         
                         # --------------------------------------
-                        # 6) 요약 카드 및 데이터 테이블 (종목 순서 완전 동기화)
+                        # 6) 요약 카드 및 데이터 테이블
                         # --------------------------------------
                         st.subheader("📌 공통 기간 최종 수익률 요약")
                         cols = st.columns(min(len(final_tickers), 5))
