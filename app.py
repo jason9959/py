@@ -214,7 +214,164 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
 
 # ==========================================
 # 기능 2: 신규 기능 모드
+# elif app_mode == "2. 신규 기능 (개발 예정 모드)":
+#     st.title("🧮 새로운 기능 전용 페이지")
+#     st.info("이곳은 두 번째 메뉴 선택 시 사용할 추가 기능 페이지입니다.")
+# ==========================================
+
+
+
+# ==========================================
+# 기능 2: 포트폴리오 자산배분 백테스트 및 성과 분석
 # ==========================================
 elif app_mode == "2. 신규 기능 (개발 예정 모드)":
-    st.title("🧮 새로운 기능 전용 페이지")
-    st.info("이곳은 두 번째 메뉴 선택 시 사용할 추가 기능 페이지입니다.")
+    st.title("💼 포트폴리오 자산배분 백테스트 & 위험 분석")
+    st.markdown("설정한 자산 비중에 따른 **포트폴리오 총자산 성장 추이**와 **CAGR, MDD, 샤프 지수** 등 핵심 투자 지표를 분석합니다.")
+
+    st.sidebar.header("🔍 백테스트 조건 설정")
+
+    # [STEP 1] 날짜 및 초기 투자금 설정
+    st.sidebar.subheader("📅 기간 및 초기 자금")
+    default_start = datetime.date(2021, 1, 1)
+    default_end = datetime.date.today()
+    start_date = st.sidebar.date_input("2-1. 시작 날짜", default_start, key="bt_start")
+    end_date = st.sidebar.date_input("2-2. 종료 날짜", default_end, key="bt_end")
+    
+    init_balance = st.sidebar.number_input("2-3. 초기 투자금 ($ 또는 원)", value=10000, step=1000)
+
+    st.sidebar.markdown("---")
+
+    # [STEP 2] 종목 및 비중 입력
+    st.sidebar.subheader("⚖️ 포트폴리오 자산 비중 (%)")
+    st.sidebar.caption("비중의 합이 100%가 되도록 설정하세요.")
+
+    bt_default_inputs = ["AAPL", "MSFT", "QQQ", "SCHD", "005930.KS"]
+    bt_default_weights = [30, 20, 20, 20, 10]
+
+    input_portfolio = []
+    
+    for i in range(5):
+        col_t, col_w = st.sidebar.columns([2, 1])
+        with col_t:
+            val = st.text_input(f"종목 {i+1}", value=bt_default_inputs[i] if i < len(bt_default_inputs) else "", key=f"bt_tk_{i+1}")
+        with col_w:
+            weight = st.number_input(f"비중%", value=bt_default_weights[i] if i < len(bt_default_weights) else 0, min_value=0, max_value=100, step=5, key=f"bt_wt_{i+1}")
+        
+        resolved_t = resolve_ticker(val)
+        if resolved_t and weight > 0:
+            input_portfolio.append({
+                "ticker": resolved_t,
+                "weight": weight
+            })
+
+    total_weight = sum([item["weight"] for item in input_portfolio])
+    
+    st.sidebar.markdown(f"**현재 총 비중 합계:** `{total_weight}%`")
+    if total_weight != 100:
+        st.sidebar.warning("⚠️ 비중 합계가 100%가 되도록 조정해 주세요.")
+
+    st.sidebar.markdown("---")
+    run_bt_button = st.sidebar.button("📊 백테스트 실행하기", use_container_width=True)
+
+    # ==========================================
+    # [STEP 3] 백테스트 연산 및 데이터 처리
+    # ==========================================
+    if run_bt_button:
+        if start_date >= end_date:
+            st.error("시작 날짜는 종료 날짜보다 앞서야 합니다.")
+        elif not input_portfolio:
+            st.warning("최소 1개 이상의 유효한 종목과 0% 초과의 비중을 입력해 주세요.")
+        elif total_weight != 100:
+            st.error(f"비중 합계가 {total_weight}%입니다. 100%가 되도록 변경 후 실행해 주세요.")
+        else:
+            with st.spinner("과거 주가 데이터수집 및 포트폴리오 백테스팅 중..."):
+                try:
+                    bt_tickers = [item["ticker"] for item in input_portfolio]
+                    weights = [item["weight"] / 100.0 for item in input_portfolio]
+
+                    # 1) 데이터 수집
+                    df_raw = yf.download(bt_tickers, start=start_date, end=end_date)["Close"]
+
+                    if isinstance(df_raw, pd.Series):
+                        df_raw = df_raw.to_frame(name=bt_tickers[0])
+
+                    # 입력 순서 및 공통 거래일 처리
+                    existing_tickers = [t for t in bt_tickers if t in df_raw.columns]
+                    df_clean = df_raw[existing_tickers].dropna()
+
+                    if df_clean.empty or len(df_clean) < 2:
+                        st.error("해당 기간의 공통 거래일 데이터가 부족합니다.")
+                    else:
+                        # 2) 일별 수익률 산출
+                        daily_returns = df_clean.pct_change().dropna()
+                        
+                        # 3) 가중합을 통한 포트폴리오 일별 수익률 계산
+                        portfolio_daily_return = (daily_returns * weights).sum(axis=1)
+
+                        # 4) 자산 누적 성과 계산 (Cumulative Returns)
+                        portfolio_cum_return = (1 + portfolio_daily_return).cumprod()
+                        portfolio_val = init_balance * portfolio_cum_return
+
+                        # 5) 주요 지표 산출 (CAGR, Volatility, Sharpe, MDD)
+                        total_days = (df_clean.index[-1] - df_clean.index[0]).days
+                        years = total_days / 365.25
+                        
+                        final_val = portfolio_val.iloc[-1]
+                        total_return_pct = ((final_val / init_balance) - 1) * 100
+                        cagr = (((final_val / init_balance) ** (1 / years)) - 1) * 100 if years > 0 else 0
+
+                        # 변동성 및 샤프 지수 (무위험 수익률 2% 가정)
+                        volatility = portfolio_daily_return.std() * (252 ** 0.5) * 100
+                        risk_free_rate = 0.02
+                        mean_annual_return = portfolio_daily_return.mean() * 252
+                        sharpe_ratio = (mean_annual_return - risk_free_rate) / (volatility / 100) if volatility != 0 else 0
+
+                        # MDD (Maximum Drawdown)
+                        peak = portfolio_val.cummax()
+                        drawdown = (portfolio_val - peak) / peak
+                        mdd = drawdown.min() * 100
+
+                        # --------------------------------------
+                        # 6) 결과 시각화
+                        # --------------------------------------
+                        st.subheader("📌 핵심 성과 지표 (Key Metrics)")
+                        m1, m2, m3, m4, m5 = st.columns(5)
+                        
+                        m1.metric("최종 자산 평가액", f"{final_val:,.0f}")
+                        m2.metric("총 수익률", f"{total_return_pct:+.2f}%")
+                        m3.metric("CAGR (연평균 성장률)", f"{cagr:.2f}%")
+                        m4.metric("MDD (최대 낙폭)", f"{mdd:.2f}%")
+                        m5.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
+
+                        st.markdown("---")
+
+                        # 차트 1: 자산 가치 상승 곡선
+                        st.subheader("📈 포트폴리오 자산 성장 추이")
+                        fig_pf, ax_pf = plt.subplots(figsize=(12, 5))
+                        plt.style.use('seaborn-v0_8-whitegrid')
+
+                        ax_pf.plot(portfolio_val.index, portfolio_val, label="Portfolio Value", color="#1f77b4", linewidth=2.5)
+                        ax_pf.set_title(f'Portfolio Growth ({df_clean.index[0].strftime("%Y-%m-%d")} ~ {df_clean.index[-1].strftime("%Y-%m-%d")})', fontsize=14, fontweight='bold')
+                        ax_pf.set_ylabel("Asset Value", fontsize=11)
+                        ax_pf.legend(loc='upper left')
+                        st.pyplot(fig_pf)
+
+                        # 차트 2: Drawdown (낙폭 차트)
+                        st.subheader("📉 Drawdown (고점 대비 낙폭)")
+                        fig_dd, ax_dd = plt.subplots(figsize=(12, 3))
+                        ax_dd.fill_between(drawdown.index, drawdown * 100, 0, color="red", alpha=0.3)
+                        ax_dd.plot(drawdown.index, drawdown * 100, color="red", linewidth=1)
+                        ax_dd.set_ylabel("Drawdown (%)", fontsize=11)
+                        ax_dd.set_ylim(min(drawdown * 100) * 1.1, 5)
+                        st.pyplot(fig_dd)
+
+                        # 구성 포트폴리오 요약 표
+                        st.subheader("📋 설정 포트폴리오 비중")
+                        pf_df = pd.DataFrame(input_portfolio)
+                        pf_df["name"] = pf_df["ticker"].map(lambda x: STOCK_DICT.get(x, x))
+                        pf_df["weight"] = pf_df["weight"].map(lambda x: f"{x}%")
+                        st.table(pf_df[["ticker", "name", "weight"]])
+
+                except Exception as e:
+                    st.error(f"백테스트 계산 중 오류가 발생했습니다: {e}")
+
