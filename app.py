@@ -56,16 +56,13 @@ def resolve_ticker(user_input):
 
 def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, static_freq=None, abs_sum_threshold=None, single_dev_threshold=None, init_cash=100.0):
     """
-    일별 주가 데이터와 목표 비중, 리밸런싱 규칙에 따라 포트폴리오 자산 가치 시series를 계산
+    일별 주가 데이터와 목표 비중, 리밸런싱 규칙에 따라 포트폴리오 자산 가치 시리즈를 계산
     """
     dates = df_prices.index
     n_days = len(dates)
-    n_assets = len(target_weights)
     
-    # 결과 저장용 배열
     portfolio_values = np.zeros(n_days)
     
-    # 첫날 수량 계산 (포트폴리오 초기 가치 = init_cash)
     current_cash_allocations = init_cash * target_weights
     initial_prices = df_prices.iloc[0].values
     shares = current_cash_allocations / initial_prices
@@ -79,7 +76,6 @@ def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, st
         current_total_val = np.sum(current_asset_values)
         portfolio_values[t] = current_total_val
         
-        # 리밸런싱 필요 여부 판단
         do_rebalance = False
         
         if rebalance_type == "정적 리밸런싱":
@@ -106,14 +102,11 @@ def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, st
                     do_rebalance = True
 
         elif rebalance_type == "동적 리밸런싱":
-            # 이전 리밸런싱 시점 주가 대비 변동률 (%)
             price_changes_pct = (current_prices - last_rebal_prices) / last_rebal_prices * 100.0
             
-            # 조건 1: 변동률 절대값의 총합
             abs_sum = np.sum(np.abs(price_changes_pct))
             cond1 = (abs_sum_threshold is not None) and (abs_sum >= abs_sum_threshold)
             
-            # 조건 2: 개별 종목 변동률 초과 여부
             cond2 = False
             if single_dev_threshold is not None and single_dev_threshold > 0:
                 cond2 = np.any(np.abs(price_changes_pct) > single_dev_threshold)
@@ -121,7 +114,6 @@ def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, st
             if cond1 or cond2:
                 do_rebalance = True
                 
-        # 리밸런싱 실행: 현재 자산 가치 기준으로 원래 비중대로 재배분
         if do_rebalance:
             shares = (current_total_val * target_weights) / current_prices
             last_rebal_prices = current_prices.copy()
@@ -129,7 +121,7 @@ def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, st
     return pd.Series(portfolio_values, index=dates)
 
 # ==========================================
-# [사이드바] 메인 모드 및 리밸런싱 옵션 설정
+# [사이드바] 메인 모드 선택 및 실행 버튼
 # ==========================================
 st.sidebar.title("📌 대시보드 메뉴")
 app_mode = st.sidebar.selectbox(
@@ -137,42 +129,51 @@ app_mode = st.sidebar.selectbox(
     ["1. 다중 종목 상대 수익률 비교 (기준 100)", "2. 포트폴리오 자산배분 백테스트"]
 )
 
+# 👉 기능 선택 드롭다운 바로 밑으로 실행 버튼 이동
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ 리밸런싱 기준 설정")
+main_run_button = st.sidebar.button("🚀 선택한 기능 실행하기", use_container_width=True)
+st.sidebar.markdown("---")
 
-rebalance_type = st.sidebar.selectbox(
-    "리밸런싱 방식을 선택하세요:",
-    ["정적 리밸런싱", "동적 리밸런싱"]
-)
-
-static_freq = None
+# ==========================================
+# [사이드바] 리밸런싱 옵션 (기능 2 전용)
+# ==========================================
+rebalance_type = "정적 리밸런싱"
+static_freq = "매일"
 abs_sum_threshold = None
 single_dev_threshold = None
 
-if rebalance_type == "정적 리밸런싱":
-    static_freq = st.sidebar.selectbox(
-        "리밸런싱 주기 선택:",
-        ["매일", "월간", "분기", "반기", "연간"]
-    )
-elif rebalance_type == "동적 리밸런싱":
-    st.sidebar.caption("💡 리밸런싱 시점 대비 가격 변동 기준으로 실행합니다.")
-    abs_sum_threshold = st.sidebar.number_input(
-        "1. 전 종목 변동률 절대값 합계 임계값 (%) [필수]",
-        min_value=0.1, value=10.0, step=0.5,
-        help="각 종목의 변동률(|ΔP/P|) 절대값 총합이 이 값 이상이면 리밸런싱을 진행합니다."
-    )
-    single_dev_input = st.sidebar.text_input(
-        "2. 개별 종목 변동률 임계값 (%) [선택]",
-        value="",
-        placeholder="예: 5.0 (미입력 시 미적용)"
-    )
-    if single_dev_input.strip():
-        try:
-            single_dev_threshold = float(single_dev_input)
-        except ValueError:
-            st.sidebar.error("개별 종목 변동률에는 숫자만 입력해 주세요.")
+if app_mode == "2. 포트폴리오 자산배분 백테스트":
+    st.sidebar.subheader("⚙️ 리밸런싱 기준 설정")
 
-st.sidebar.markdown("---")
+    rebalance_type = st.sidebar.selectbox(
+        "리밸런싱 방식을 선택하세요:",
+        ["정적 리밸런싱", "동적 리밸런싱"]
+    )
+
+    if rebalance_type == "정적 리밸런싱":
+        static_freq = st.sidebar.selectbox(
+            "리밸런싱 주기 선택:",
+            ["매일", "월간", "분기", "반기", "연간"]
+        )
+    elif rebalance_type == "동적 리밸런싱":
+        st.sidebar.caption("💡 리밸런싱 시점 대비 가격 변동 기준으로 실행합니다.")
+        abs_sum_threshold = st.sidebar.number_input(
+            "1. 전 종목 변동률 절대값 합계 임계값 (%) [필수]",
+            min_value=0.1, value=10.0, step=0.5,
+            help="각 종목의 변동률(|ΔP/P|) 절대값 총합이 이 값 이상이면 리밸런싱을 진행합니다."
+        )
+        single_dev_input = st.sidebar.text_input(
+            "2. 개별 종목 변동률 임계값 (%) [선택]",
+            value="",
+            placeholder="예: 5.0 (미입력 시 미적용)"
+        )
+        if single_dev_input.strip():
+            try:
+                single_dev_threshold = float(single_dev_input)
+            except ValueError:
+                st.sidebar.error("개별 종목 변동률에는 숫자만 입력해 주세요.")
+
+    st.sidebar.markdown("---")
 
 # ==========================================
 # 기능 1: 다중 종목 상대 수익률 비교 (기준 100)
@@ -190,8 +191,6 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     start_date = st.sidebar.date_input("1-1. 시작 날짜", default_start)
     end_date = st.sidebar.date_input("1-2. 종료 날짜", default_end)
 
-    st.sidebar.markdown("---")
-    run_button = st.sidebar.button("🚀 주가 데이터 조회 및 비교하기", use_container_width=True)
     st.sidebar.markdown("---")
 
     # [STEP 2] 종목 1~10 입력 수집 (기본값 빈값)
@@ -234,7 +233,7 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     elif not ordered_target_tickers:
         st.warning("최소 1개 이상의 올바른 종목을 사이드바에 입력해 주세요.")
     else:
-        if run_button:
+        if main_run_button:
             with st.spinner("Yahoo Finance에서 실시간 데이터를 불러오는 중..."):
                 try:
                     df_raw = yf.download(ordered_target_tickers, start=start_date, end=end_date)["Close"]
@@ -253,14 +252,13 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                         indexed_df = (common_df / common_df.iloc[0]) * 100
 
                         st.subheader(f"📈 상대 성과 추이 그래프 (공통 기준일: {base_date} = 100)")
-                        st.caption(f"선택된 리밸런싱 방식: **{rebalance_type}** " + (f"({static_freq})" if static_freq else ""))
 
                         fig, ax = plt.subplots(figsize=(12, 6))
                         plt.style.use('seaborn-v0_8-whitegrid')
 
                         ax.axhline(100, color='gray', linestyle='--', linewidth=1.2, alpha=0.7, label="Base (100)")
 
-                        # 개별 종목 라인
+                        # 개별 종목 라인 출력
                         for tk in final_tickers:
                             slot_name = ticker_to_slot_map.get(tk, "")
                             display_name = STOCK_DICT.get(tk, tk).split(' (')[0]
@@ -271,20 +269,6 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                                 linewidth=2
                             )
 
-                        # 동일 비중 포트폴리오의 선택한 리밸런싱 기준 적용 성과 라인 추가
-                        equal_weights = np.ones(len(final_tickers)) / len(final_tickers)
-                        rebalanced_portfolio_series = calculate_rebalanced_portfolio(
-                            common_df, equal_weights, rebalance_type, static_freq, abs_sum_threshold, single_dev_threshold, init_cash=100.0
-                        )
-                        ax.plot(
-                            rebalanced_portfolio_series.index,
-                            rebalanced_portfolio_series,
-                            label="⚖️ 동일비중 포트폴리오 (리밸런싱 적용)",
-                            color="black",
-                            linewidth=3,
-                            linestyle="-"
-                        )
-
                         ax.set_title(f'Indexed Performance Comparison ({base_date} ~ {end_date})', fontsize=15, fontweight='bold')
                         ax.set_xlabel('Date', fontsize=11)
                         ax.set_ylabel('Indexed Value (Base = 100)', fontsize=11)
@@ -294,23 +278,14 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
 
                         # 요약 카드
                         st.subheader("📌 공통 기간 최종 수익률 요약")
-                        cols = st.columns(min(len(final_tickers) + 1, 5))
-
-                        # 포트폴리오 메트릭 표시
-                        pf_final_val = rebalanced_portfolio_series.iloc[-1]
-                        pf_return_pct = pf_final_val - 100
-                        cols[0].metric(
-                            label="⚖️ 포트폴리오 (합계)",
-                            value=f"{pf_final_val:.2f}",
-                            delta=f"{pf_return_pct:+.2f}%"
-                        )
+                        cols = st.columns(min(len(final_tickers), 5))
 
                         for idx, tk in enumerate(final_tickers):
                             slot_name = ticker_to_slot_map.get(tk, "")
                             current_idx_val = indexed_df[tk].iloc[-1]
                             return_pct = current_idx_val - 100
 
-                            col_target = cols[(idx + 1) % 5]
+                            col_target = cols[idx % 5]
                             col_target.metric(
                                 label=f"{slot_name}: {tk}", 
                                 value=f"{current_idx_val:.2f}", 
@@ -318,9 +293,7 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                             )
 
                         st.subheader("최근 지수화 데이터 (기준일 = 100)")
-                        indexed_df_with_pf = indexed_df.copy()
-                        indexed_df_with_pf["Portfolio_Rebalanced"] = rebalanced_portfolio_series
-                        st.dataframe(indexed_df_with_pf.tail(10))
+                        st.dataframe(indexed_df.tail(10))
 
                     else:
                         st.error("입력하신 종목들의 공통 거래일 주가 데이터가 부족합니다. 날짜 범위를 조정해 보세요.")
@@ -373,13 +346,10 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     if total_weight != 100 and len(input_portfolio) > 0:
         st.sidebar.warning("⚠️ 비중 합계가 100%가 되도록 조정해 주세요.")
 
-    st.sidebar.markdown("---")
-    run_bt_button = st.sidebar.button("📊 백테스트 실행하기", use_container_width=True)
-
     # ==========================================
     # [STEP 3] 백테스트 연산 및 데이터 처리
     # ==========================================
-    if run_bt_button:
+    if main_run_button:
         if start_date >= end_date:
             st.error("시작 날짜는 종료 날짜보다 앞서야 합니다.")
         elif not input_portfolio:
