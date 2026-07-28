@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import datetime
 import re
 import pandas as pd
+import numpy as np
 
 # 1. 웹페이지 기본 설정
 st.set_page_config(page_title="통합 포트폴리오 대시보드", layout="wide")
@@ -23,7 +24,7 @@ STOCK_DICT = {
     "SPY": "SPDR S&P 500 ETF Trust",
     "QQQ": "Invesco QQQ Trust",
     "SCHD": "Schwab U.S. Dividend Equity ETF",
-    
+
     # 한국 주식/ETF (.KS)
     "005930.KS": "삼성전자 (Samsung Electronics)",
     "000660.KS": "SK하이닉스 (SK Hynix)",
@@ -39,28 +40,137 @@ def resolve_ticker(user_input):
     if not user_input:
         return None
     cleaned = user_input.strip()
-    
+
     if re.fullmatch(r'[\u3131-\u318E]+', cleaned):
         return None
 
     cleaned_upper = cleaned.upper()
     if cleaned_upper in STOCK_DICT:
         return cleaned_upper
-        
+
     for ticker, name in STOCK_DICT.items():
         if cleaned.lower() in name.lower() or cleaned_upper in ticker:
             return ticker
-            
+
     return cleaned_upper
 
+def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, static_freq=None, abs_sum_threshold=None, single_dev_threshold=None, init_cash=100.0):
+    """
+    일별 주가 데이터와 목표 비중, 리밸런싱 규칙에 따라 포트폴리오 자산 가치 시series를 계산
+    """
+    dates = df_prices.index
+    n_days = len(dates)
+    n_assets = len(target_weights)
+    
+    # 결과 저장용 배열
+    portfolio_values = np.zeros(n_days)
+    
+    # 첫날 수량 계산 (포트폴리오 초기 가치 = init_cash)
+    current_cash_allocations = init_cash * target_weights
+    initial_prices = df_prices.iloc[0].values
+    shares = current_cash_allocations / initial_prices
+    
+    portfolio_values[0] = init_cash
+    last_rebal_prices = initial_prices.copy()
+    
+    for t in range(1, n_days):
+        current_prices = df_prices.iloc[t].values
+        current_asset_values = shares * current_prices
+        current_total_val = np.sum(current_asset_values)
+        portfolio_values[t] = current_total_val
+        
+        # 리밸런싱 필요 여부 판단
+        do_rebalance = False
+        
+        if rebalance_type == "정적 리밸런싱":
+            curr_date = dates[t]
+            prev_date = dates[t-1]
+            
+            if static_freq == "매일":
+                do_rebalance = True
+            elif static_freq == "월간":
+                if curr_date.month != prev_date.month:
+                    do_rebalance = True
+            elif static_freq == "분기":
+                curr_q = (curr_date.month - 1) // 3
+                prev_q = (prev_date.month - 1) // 3
+                if curr_q != prev_q:
+                    do_rebalance = True
+            elif static_freq == "반기":
+                curr_h = 1 if curr_date.month <= 6 else 2
+                prev_h = 1 if prev_date.month <= 6 else 2
+                if curr_h != prev_h:
+                    do_rebalance = True
+            elif static_freq == "연간":
+                if curr_date.year != prev_date.year:
+                    do_rebalance = True
+
+        elif rebalance_type == "동적 리밸런싱":
+            # 이전 리밸런싱 시점 주가 대비 변동률 (%)
+            price_changes_pct = (current_prices - last_rebal_prices) / last_rebal_prices * 100.0
+            
+            # 조건 1: 변동률 절대값의 총합
+            abs_sum = np.sum(np.abs(price_changes_pct))
+            cond1 = (abs_sum_threshold is not None) and (abs_sum >= abs_sum_threshold)
+            
+            # 조건 2: 개별 종목 변동률 초과 여부
+            cond2 = False
+            if single_dev_threshold is not None and single_dev_threshold > 0:
+                cond2 = np.any(np.abs(price_changes_pct) > single_dev_threshold)
+                
+            if cond1 or cond2:
+                do_rebalance = True
+                
+        # 리밸런싱 실행: 현재 자산 가치 기준으로 원래 비중대로 재배분
+        if do_rebalance:
+            shares = (current_total_val * target_weights) / current_prices
+            last_rebal_prices = current_prices.copy()
+            
+    return pd.Series(portfolio_values, index=dates)
+
 # ==========================================
-# [사이드바] 메인 모드 선택
+# [사이드바] 메인 모드 및 리밸런싱 옵션 설정
 # ==========================================
 st.sidebar.title("📌 대시보드 메뉴")
 app_mode = st.sidebar.selectbox(
     "실행할 기능을 선택하세요:",
-    ["1. 다중 종목 상대 수익률 비교 (기준 100)", "2. 신규 기능 (개발 예정 모드)"]
+    ["1. 다중 종목 상대 수익률 비교 (기준 100)", "2. 포트폴리오 자산배분 백테스트"]
 )
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ 리밸런싱 기준 설정")
+
+rebalance_type = st.sidebar.selectbox(
+    "리밸런싱 방식을 선택하세요:",
+    ["정적 리밸런싱", "동적 리밸런싱"]
+)
+
+static_freq = None
+abs_sum_threshold = None
+single_dev_threshold = None
+
+if rebalance_type == "정적 리밸런싱":
+    static_freq = st.sidebar.selectbox(
+        "리밸런싱 주기 선택:",
+        ["매일", "월간", "분기", "반기", "연간"]
+    )
+elif rebalance_type == "동적 리밸런싱":
+    st.sidebar.caption("💡 리밸런싱 시점 대비 가격 변동 기준으로 실행합니다.")
+    abs_sum_threshold = st.sidebar.number_input(
+        "1. 전 종목 변동률 절대값 합계 임계값 (%) [필수]",
+        min_value=0.1, value=10.0, step=0.5,
+        help="각 종목의 변동률(|ΔP/P|) 절대값 총합이 이 값 이상이면 리밸런싱을 진행합니다."
+    )
+    single_dev_input = st.sidebar.text_input(
+        "2. 개별 종목 변동률 임계값 (%) [선택]",
+        value="",
+        placeholder="예: 5.0 (미입력 시 미적용)"
+    )
+    if single_dev_input.strip():
+        try:
+            single_dev_threshold = float(single_dev_input)
+        except ValueError:
+            st.sidebar.error("개별 종목 변동률에는 숫자만 입력해 주세요.")
 
 st.sidebar.markdown("---")
 
@@ -81,43 +191,35 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     end_date = st.sidebar.date_input("1-2. 종료 날짜", default_end)
 
     st.sidebar.markdown("---")
-    
-    # ------------------------------------------
-    # 👉 [위치 변경] 버튼을 비교종목 입력 텍스트 위로 이동
-    # ------------------------------------------
     run_button = st.sidebar.button("🚀 주가 데이터 조회 및 비교하기", use_container_width=True)
-
     st.sidebar.markdown("---")
 
-    # [STEP 2] 종목 1~10 순서 입력 수집
+    # [STEP 2] 종목 1~10 입력 수집 (기본값 빈값)
     st.sidebar.subheader("📈 비교 종목 입력 (최대 10개)")
-    
-    default_inputs = ["AAPL", "MSFT", "005930.KS", "379800.KS", "", "", "", "", "", ""]
-    
-    # 순서를 명확하게 보존하기 위해 구조화된 데이터(List of Dict) 생성
+
     input_stock_list = []
 
     for i in range(10):
         slot_label = f"종목 {i+1}"
         val = st.sidebar.text_input(
             slot_label, 
-            value=default_inputs[i], 
+            value="", 
             key=f"stock_input_{i+1}",
             placeholder="티커 또는 한글 종목명"
         )
-        
+
         resolved_t = resolve_ticker(val)
         if resolved_t:
             input_stock_list.append({
-                "slot": slot_label,       # 예: "종목 1"
-                "raw_input": val,          # 예: "AAPL"
-                "ticker": resolved_t      # 예: "AAPL"
+                "slot": slot_label,
+                "raw_input": val,
+                "ticker": resolved_t
             })
 
-    # [STEP 3] 유효성 검사 및 중복 처리 (사용자 입력 순서 유지)
+    # [STEP 3] 유효성 검사 및 중복 처리
     ordered_target_tickers = []
     ticker_to_slot_map = {}
-    
+
     for item in input_stock_list:
         tk = item["ticker"]
         if tk not in ordered_target_tickers:
@@ -127,48 +229,38 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     # ==========================================
     # [STEP 4] 데이터 조회 및 시각화 파이프라인
     # ==========================================
-    if start_date > end_date:
+    if start_date >= end_date:
         st.error("시작 날짜는 종료 날짜보다 앞서야 합니다.")
     elif not ordered_target_tickers:
-        st.warning("최소 1개 이상의 올바른 종목을 입력해 주세요.")
+        st.warning("최소 1개 이상의 올바른 종목을 사이드바에 입력해 주세요.")
     else:
-        # 버튼클릭 상태 판단
         if run_button:
             with st.spinner("Yahoo Finance에서 실시간 데이터를 불러오는 중..."):
                 try:
-                    # 1) 전체 종목 데이터 수집
                     df_raw = yf.download(ordered_target_tickers, start=start_date, end=end_date)["Close"]
-                    
-                    # 단일 종목 예외 처리
+
                     if isinstance(df_raw, pd.Series):
                         df_raw = df_raw.to_frame(name=ordered_target_tickers[0])
 
-                    # 2) yf.download의 알파벳 정렬을 무효화하고 사용자 입력 순서로 강제 고정
                     existing_in_order = [t for t in ordered_target_tickers if t in df_raw.columns]
-                    df_ordered = df_raw[existing_in_order]
+                    common_df = df_raw[existing_in_order].dropna()
 
-                    # 3) 공통 거래일 필터링 (결측치 제거)
-                    common_df = df_ordered.dropna()
-
-                    if not common_df.empty and len(common_df) > 0:
+                    if not common_df.empty and len(common_df) > 1:
                         final_tickers = list(common_df.columns)
                         base_date = common_df.index[0].strftime('%Y-%m-%d')
-                        
-                        # 4) 첫 거래일 기준 100 지수화
+
+                        # 개별 종목 지수화 (단일 종목 기준)
                         indexed_df = (common_df / common_df.iloc[0]) * 100
 
-                        # --------------------------------------
-                        # 5) 시각화: 그래프 출력
-                        # --------------------------------------
                         st.subheader(f"📈 상대 성과 추이 그래프 (공통 기준일: {base_date} = 100)")
-                        
+                        st.caption(f"선택된 리밸런싱 방식: **{rebalance_type}** " + (f"({static_freq})" if static_freq else ""))
+
                         fig, ax = plt.subplots(figsize=(12, 6))
                         plt.style.use('seaborn-v0_8-whitegrid')
-                        
-                        # 기준선(100) 표시
+
                         ax.axhline(100, color='gray', linestyle='--', linewidth=1.2, alpha=0.7, label="Base (100)")
-                        
-                        # 순서 보장된 final_tickers로 라인 그리기
+
+                        # 개별 종목 라인
                         for tk in final_tickers:
                             slot_name = ticker_to_slot_map.get(tk, "")
                             display_name = STOCK_DICT.get(tk, tk).split(' (')[0]
@@ -178,55 +270,69 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                                 label=f"[{slot_name}] {tk} ({display_name})", 
                                 linewidth=2
                             )
-                        
+
+                        # 동일 비중 포트폴리오의 선택한 리밸런싱 기준 적용 성과 라인 추가
+                        equal_weights = np.ones(len(final_tickers)) / len(final_tickers)
+                        rebalanced_portfolio_series = calculate_rebalanced_portfolio(
+                            common_df, equal_weights, rebalance_type, static_freq, abs_sum_threshold, single_dev_threshold, init_cash=100.0
+                        )
+                        ax.plot(
+                            rebalanced_portfolio_series.index,
+                            rebalanced_portfolio_series,
+                            label="⚖️ 동일비중 포트폴리오 (리밸런싱 적용)",
+                            color="black",
+                            linewidth=3,
+                            linestyle="-"
+                        )
+
                         ax.set_title(f'Indexed Performance Comparison ({base_date} ~ {end_date})', fontsize=15, fontweight='bold')
                         ax.set_xlabel('Date', fontsize=11)
                         ax.set_ylabel('Indexed Value (Base = 100)', fontsize=11)
                         ax.legend(fontsize=10, loc='upper left')
-                        
+
                         st.pyplot(fig)
-                        
-                        # --------------------------------------
-                        # 6) 요약 카드 및 데이터 테이블
-                        # --------------------------------------
+
+                        # 요약 카드
                         st.subheader("📌 공통 기간 최종 수익률 요약")
-                        cols = st.columns(min(len(final_tickers), 5))
-                        
+                        cols = st.columns(min(len(final_tickers) + 1, 5))
+
+                        # 포트폴리오 메트릭 표시
+                        pf_final_val = rebalanced_portfolio_series.iloc[-1]
+                        pf_return_pct = pf_final_val - 100
+                        cols[0].metric(
+                            label="⚖️ 포트폴리오 (합계)",
+                            value=f"{pf_final_val:.2f}",
+                            delta=f"{pf_return_pct:+.2f}%"
+                        )
+
                         for idx, tk in enumerate(final_tickers):
                             slot_name = ticker_to_slot_map.get(tk, "")
                             current_idx_val = indexed_df[tk].iloc[-1]
                             return_pct = current_idx_val - 100
-                            
-                            col_target = cols[idx % 5]
+
+                            col_target = cols[(idx + 1) % 5]
                             col_target.metric(
                                 label=f"{slot_name}: {tk}", 
                                 value=f"{current_idx_val:.2f}", 
                                 delta=f"{return_pct:+.2f}%"
                             )
-                        
+
                         st.subheader("최근 지수화 데이터 (기준일 = 100)")
-                        st.dataframe(indexed_df.tail(10))
-                        
+                        indexed_df_with_pf = indexed_df.copy()
+                        indexed_df_with_pf["Portfolio_Rebalanced"] = rebalanced_portfolio_series
+                        st.dataframe(indexed_df_with_pf.tail(10))
+
                     else:
-                        st.error("입력하신 종목들의 공통 거래일 주가 데이터가 존재하지 않습니다. 날짜 범위를 조정해 보세요.")
+                        st.error("입력하신 종목들의 공통 거래일 주가 데이터가 부족합니다. 날짜 범위를 조정해 보세요.")
                 except Exception as e:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
-# 기능 2: 신규 기능 모드
-# elif app_mode == "2. 신규 기능 (개발 예정 모드)":
-#     st.title("🧮 새로운 기능 전용 페이지")
-#     st.info("이곳은 두 번째 메뉴 선택 시 사용할 추가 기능 페이지입니다.")
+# 기능 2: 포트폴리오 자산배분 백테스트 및 위험 분석
 # ==========================================
-
-
-
-# ==========================================
-# 기능 2: 포트폴리오 자산배분 백테스트 및 성과 분석
-# ==========================================
-elif app_mode == "2. 신규 기능 (개발 예정 모드)":
+elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     st.title("💼 포트폴리오 자산배분 백테스트 & 위험 분석")
-    st.markdown("설정한 자산 비중에 따른 **포트폴리오 총자산 성장 추이**와 **CAGR, MDD, 샤프 지수** 등 핵심 투자 지표를 분석합니다.")
+    st.markdown("설정한 자산 비중과 리밸런싱 조건에 따른 **포트폴리오 총자산 성장 추이**와 **CAGR, MDD, 샤프 지수** 등을 분석합니다.")
 
     st.sidebar.header("🔍 백테스트 조건 설정")
 
@@ -241,21 +347,18 @@ elif app_mode == "2. 신규 기능 (개발 예정 모드)":
 
     st.sidebar.markdown("---")
 
-    # [STEP 2] 종목 및 비중 입력
+    # [STEP 2] 종목 및 비중 입력 (기본값 빈값)
     st.sidebar.subheader("⚖️ 포트폴리오 자산 비중 (%)")
     st.sidebar.caption("비중의 합이 100%가 되도록 설정하세요.")
-
-    bt_default_inputs = ["AAPL", "MSFT", "QQQ", "SCHD", "005930.KS"]
-    bt_default_weights = [30, 20, 20, 20, 10]
 
     input_portfolio = []
     
     for i in range(5):
         col_t, col_w = st.sidebar.columns([2, 1])
         with col_t:
-            val = st.text_input(f"종목 {i+1}", value=bt_default_inputs[i] if i < len(bt_default_inputs) else "", key=f"bt_tk_{i+1}")
+            val = st.text_input(f"종목 {i+1}", value="", placeholder="티커/명칭", key=f"bt_tk_{i+1}")
         with col_w:
-            weight = st.number_input(f"비중%", value=bt_default_weights[i] if i < len(bt_default_weights) else 0, min_value=0, max_value=100, step=5, key=f"bt_wt_{i+1}")
+            weight = st.number_input(f"비중%", value=0, min_value=0, max_value=100, step=5, key=f"bt_wt_{i+1}")
         
         resolved_t = resolve_ticker(val)
         if resolved_t and weight > 0:
@@ -267,7 +370,7 @@ elif app_mode == "2. 신규 기능 (개발 예정 모드)":
     total_weight = sum([item["weight"] for item in input_portfolio])
     
     st.sidebar.markdown(f"**현재 총 비중 합계:** `{total_weight}%`")
-    if total_weight != 100:
+    if total_weight != 100 and len(input_portfolio) > 0:
         st.sidebar.warning("⚠️ 비중 합계가 100%가 되도록 조정해 주세요.")
 
     st.sidebar.markdown("---")
@@ -284,35 +387,28 @@ elif app_mode == "2. 신규 기능 (개발 예정 모드)":
         elif total_weight != 100:
             st.error(f"비중 합계가 {total_weight}%입니다. 100%가 되도록 변경 후 실행해 주세요.")
         else:
-            with st.spinner("과거 주가 데이터수집 및 포트폴리오 백테스팅 중..."):
+            with st.spinner("과거 주가 데이터 수집 및 포트폴리오 백테스팅 중..."):
                 try:
                     bt_tickers = [item["ticker"] for item in input_portfolio]
-                    weights = [item["weight"] / 100.0 for item in input_portfolio]
+                    weights = np.array([item["weight"] / 100.0 for item in input_portfolio])
 
-                    # 1) 데이터 수집
                     df_raw = yf.download(bt_tickers, start=start_date, end=end_date)["Close"]
 
                     if isinstance(df_raw, pd.Series):
                         df_raw = df_raw.to_frame(name=bt_tickers[0])
 
-                    # 입력 순서 및 공통 거래일 처리
                     existing_tickers = [t for t in bt_tickers if t in df_raw.columns]
                     df_clean = df_raw[existing_tickers].dropna()
 
                     if df_clean.empty or len(df_clean) < 2:
                         st.error("해당 기간의 공통 거래일 데이터가 부족합니다.")
                     else:
-                        # 2) 일별 수익률 산출
-                        daily_returns = df_clean.pct_change().dropna()
-                        
-                        # 3) 가중합을 통한 포트폴리오 일별 수익률 계산
-                        portfolio_daily_return = (daily_returns * weights).sum(axis=1)
+                        # 리밸런싱 연산 시뮬레이션
+                        portfolio_val = calculate_rebalanced_portfolio(
+                            df_clean, weights, rebalance_type, static_freq, abs_sum_threshold, single_dev_threshold, init_cash=init_balance
+                        )
 
-                        # 4) 자산 누적 성과 계산 (Cumulative Returns)
-                        portfolio_cum_return = (1 + portfolio_daily_return).cumprod()
-                        portfolio_val = init_balance * portfolio_cum_return
-
-                        # 5) 주요 지표 산출 (CAGR, Volatility, Sharpe, MDD)
+                        # 지표 산출
                         total_days = (df_clean.index[-1] - df_clean.index[0]).days
                         years = total_days / 365.25
                         
@@ -320,7 +416,8 @@ elif app_mode == "2. 신규 기능 (개발 예정 모드)":
                         total_return_pct = ((final_val / init_balance) - 1) * 100
                         cagr = (((final_val / init_balance) ** (1 / years)) - 1) * 100 if years > 0 else 0
 
-                        # 변동성 및 샤프 지수 (무위험 수익률 2% 가정)
+                        # 일별 수익률 기반 변동성 및 샤프 지수
+                        portfolio_daily_return = portfolio_val.pct_change().dropna()
                         volatility = portfolio_daily_return.std() * (252 ** 0.5) * 100
                         risk_free_rate = 0.02
                         mean_annual_return = portfolio_daily_return.mean() * 252
@@ -332,9 +429,11 @@ elif app_mode == "2. 신규 기능 (개발 예정 모드)":
                         mdd = drawdown.min() * 100
 
                         # --------------------------------------
-                        # 6) 결과 시각화
+                        # 결과 시각화
                         # --------------------------------------
                         st.subheader("📌 핵심 성과 지표 (Key Metrics)")
+                        st.caption(f"적용된 리밸런싱 방식: **{rebalance_type}** " + (f"({static_freq})" if static_freq else ""))
+
                         m1, m2, m3, m4, m5 = st.columns(5)
                         
                         m1.metric("최종 자산 평가액", f"{final_val:,.0f}")
@@ -374,4 +473,3 @@ elif app_mode == "2. 신규 기능 (개발 예정 모드)":
 
                 except Exception as e:
                     st.error(f"백테스트 계산 중 오류가 발생했습니다: {e}")
-
