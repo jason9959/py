@@ -54,7 +54,6 @@ def calculate_rebalanced_portfolio(
     dates = df.index
     num_assets = len(weights)
     
-    # 일별 자산 가치 및 총 포트폴리오 가치 기록 배열
     asset_values = np.zeros((len(dates), num_assets))
     portfolio_value = np.zeros(len(dates))
     
@@ -70,7 +69,7 @@ def calculate_rebalanced_portfolio(
         # 1. 일별 수익률 반영
         current_asset_values = current_asset_values * (1 + pct_change.iloc[i].values)
         
-        # 2. 적립식 입금 체크 (적립식 선택 시)
+        # 2. 적립식 입금 체크
         if investment_type == "적립식" and contribution_amount > 0:
             is_contribution_day = False
             
@@ -82,7 +81,6 @@ def calculate_rebalanced_portfolio(
                 is_contribution_day = True
                 
             if is_contribution_day:
-                # 입금액을 기존 포트폴리오 비중대로 나누어 투입
                 curr_tot = np.sum(current_asset_values)
                 if curr_tot > 0:
                     current_weights = current_asset_values / curr_tot
@@ -121,9 +119,6 @@ def calculate_rebalanced_portfolio(
     return portfolio_series
 
 def get_performance_metrics(portfolio_series, risk_free_rate=0.035):
-    """
-    CAGR, MDD, Volatility, Sharpe Ratio 계산
-    """
     total_days = (portfolio_series.index[-1] - portfolio_series.index[0]).days
     total_return = (portfolio_series.iloc[-1] / portfolio_series.iloc[0]) - 1
     
@@ -134,7 +129,6 @@ def get_performance_metrics(portfolio_series, risk_free_rate=0.035):
         
     daily_returns = portfolio_series.pct_change().dropna()
     ann_vol = daily_returns.std() * np.sqrt(252)
-    
     sharpe = (cagr - risk_free_rate) / ann_vol if ann_vol != 0 else 0
     
     cum_max = portfolio_series.cummax()
@@ -155,7 +149,6 @@ def get_performance_metrics(portfolio_series, risk_free_rate=0.035):
 # ==========================================
 st.sidebar.title("⚙️ 백테스트 설정")
 
-# 기능 선택
 menu = st.sidebar.radio(
     "원하는 기능을 선택하세요",
     ["1. 다중 종목 상대 수익률 비교", "2. 포트폴리오 자산배분 백테스트"]
@@ -163,7 +156,6 @@ menu = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-# 공통 날짜 설정
 start_date = st.sidebar.date_input("시작일", datetime.date(2020, 1, 1))
 end_date = st.sidebar.date_input("종료일", datetime.date.today())
 
@@ -179,6 +171,7 @@ elif menu == "2. 포트폴리오 자산배분 백테스트":
     tickers_input = st.sidebar.text_input("자산 목록 (쉼표 구분)", "SPY, TLT, GLD")
     weights_input = st.sidebar.text_input("자산별 비중 (합계 1.0, 쉼표 구분)", "0.5, 0.4, 0.1")
     
+    # [요청사항 반영] 투자금 설정 영역
     st.sidebar.markdown("---")
     st.sidebar.subheader("💰 투자금 설정")
     investment_type = st.sidebar.selectbox("투자 방식", ["거치식", "적립식"])
@@ -191,6 +184,7 @@ elif menu == "2. 포트폴리오 자산배분 백테스트":
         contribution_amount = st.sidebar.number_input("적립 금액 (원)", value=500000, step=100000, format="%d")
         contribution_freq = st.sidebar.selectbox("적립 주기", ["매월", "매분기", "매년"])
         
+    # [요청사항 반영] 리밸런싱 설정 영역
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚖️ 리밸런싱 기준 설정")
     rebal_strategy = st.sidebar.selectbox("리밸런싱 전략", ["정적 (주기적)", "동적 (임계값 기반)"])
@@ -232,9 +226,6 @@ if run_btn:
         st.warning("선택한 기간 또는 종목에 해당하는 데이터가 없습니다.")
         st.stop()
 
-    # --------------------------------------
-    # 기능 1: 다중 종목 상대 수익률 비교
-    # --------------------------------------
     if menu == "1. 다중 종목 상대 수익률 비교":
         st.subheader("📈 다중 종목 상대 수익률 비교 ($100 기준 지수화)")
         
@@ -257,9 +248,6 @@ if run_btn:
         })
         st.dataframe(summary_df.style.format({"시작가": "{:,.2f}", "최종가": "{:,.2f}", "총 수익률(%)": "{:+.2f}%"}))
 
-    # --------------------------------------
-    # 기능 2: 포트폴리오 자산배분 백테스트
-    # --------------------------------------
     elif menu == "2. 포트폴리오 자산배분 백테스트":
         st.subheader("💼 자산배분 포트폴리오 성과 분석")
         
@@ -277,7 +265,6 @@ if run_btn:
             st.warning(f"비중 합계가 {np.sum(weights):.2f}입니다. 자동 표준화(합계 1.0)하여 계산합니다.")
             weights = weights / np.sum(weights)
 
-        # 포트폴리오 가치 계산
         portfolio_series = calculate_rebalanced_portfolio(
             df=data,
             weights=weights,
@@ -292,13 +279,12 @@ if run_btn:
         
         metrics, drawdown = get_performance_metrics(portfolio_series)
         
-        # 성과 지표 출력 (4개 컬럼)
+        # 지표 출력 (기존 화면 구조 유지)
         m_cols = st.columns(3)
         keys = list(metrics.keys())
         for idx, key in enumerate(keys):
             m_cols[idx % 3].metric(label=key, value=metrics[key])
             
-        # 포트폴리오 가치 변화 차트
         st.subheader("📈 포트폴리오 자산 추이")
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(portfolio_series.index, portfolio_series, label="Portfolio Value", color="blue")
@@ -307,7 +293,6 @@ if run_btn:
         ax.legend()
         st.pyplot(fig)
         
-        # Drawdown 차트
         st.subheader("📉 Drawdown (낙폭 차트)")
         fig_dd, ax_dd = plt.subplots(figsize=(10, 3))
         ax_dd.plot(drawdown.index, drawdown * 100, color="red", label="Drawdown (%)")
@@ -318,4 +303,4 @@ if run_btn:
         st.pyplot(fig_dd)
 
 else:
-    st.info("👈 왼쪽 사이드바에서 원하는 조건과 투자금을 설정한 후 **'🚀 선택한 기능 실행하기'** 버튼을 눌러주세요.")
+    st.info("👈 왼쪽 사이드바에서 조건을 설정한 후 **'🚀 선택한 기능 실행하기'** 버튼을 눌러주세요.")
