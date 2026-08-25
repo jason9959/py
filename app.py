@@ -54,34 +54,67 @@ def resolve_ticker(user_input):
 
     return cleaned_upper
 
-def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, static_freq=None, abs_sum_threshold=None, single_dev_threshold=None, init_cash=100.0):
+def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, static_freq=None, abs_sum_threshold=None, single_dev_threshold=None, init_cash=10000.0, invest_type="거치식", dca_amount=0.0, dca_freq="매월"):
     """
-    일별 주가 데이터와 목표 비중, 리밸런싱 규칙에 따라 포트폴리오 자산 가치 시리즈를 계산
+    일별 주가 데이터와 목표 비중, 리밸런싱 규칙, 투자 방식(거치식/적립식)에 따라 포트폴리오 자산 가치 및 총 투입 원금 시리즈를 계산
     """
     dates = df_prices.index
     n_days = len(dates)
     
     portfolio_values = np.zeros(n_days)
+    invested_capital = np.zeros(n_days)  # 총 투입 원금 추적용
     
+    # 초기 세팅
     current_cash_allocations = init_cash * target_weights
     initial_prices = df_prices.iloc[0].values
     shares = current_cash_allocations / initial_prices
     
     portfolio_values[0] = init_cash
+    invested_capital[0] = init_cash
+    
+    current_total_invested = init_cash
     last_rebal_prices = initial_prices.copy()
     
     for t in range(1, n_days):
+        curr_date = dates[t]
+        prev_date = dates[t-1]
         current_prices = df_prices.iloc[t].values
+        
+        # ------------------------------------------
+        # [추가] 적립식 투자 처리 (주기별 추가 자금 투입)
+        # ------------------------------------------
+        if invest_type == "적립식" and dca_amount > 0:
+            is_dca_day = False
+            if dca_freq == "매월":
+                if curr_date.month != prev_date.month:
+                    is_dca_day = True
+            elif dca_freq == "매분기":
+                curr_q = (curr_date.month - 1) // 3
+                prev_q = (prev_date.month - 1) // 3
+                if curr_q != prev_q:
+                    is_dca_day = True
+            elif dca_freq == "매년":
+                if curr_date.year != prev_date.year:
+                    is_dca_day = True
+            
+            if is_dca_day:
+                # 추가 적립금을 목표 비중대로 매수
+                add_shares = (dca_amount * target_weights) / current_prices
+                shares += add_shares
+                current_total_invested += dca_amount
+        
+        # 현재 자산 가치 평가
         current_asset_values = shares * current_prices
         current_total_val = np.sum(current_asset_values)
         portfolio_values[t] = current_total_val
+        invested_capital[t] = current_total_invested
         
+        # ------------------------------------------
+        # 리밸런싱 판정 로직
+        # ------------------------------------------
         do_rebalance = False
         
         if rebalance_type == "정적 리밸런싱":
-            curr_date = dates[t]
-            prev_date = dates[t-1]
-            
             if static_freq == "매일":
                 do_rebalance = True
             elif static_freq == "월간":
@@ -118,7 +151,7 @@ def calculate_rebalanced_portfolio(df_prices, target_weights, rebalance_type, st
             shares = (current_total_val * target_weights) / current_prices
             last_rebal_prices = current_prices.copy()
             
-    return pd.Series(portfolio_values, index=dates)
+    return pd.Series(portfolio_values, index=dates), pd.Series(invested_capital, index=dates)
 
 # ==========================================
 # [사이드바] 메인 모드 선택 및 실행 버튼
@@ -143,7 +176,7 @@ abs_sum_threshold = None
 single_dev_threshold = None
 
 if app_mode == "2. 포트폴리오 자산배분 백테스트":
-    st.sidebar.subheader("⚙️ 리밸런싱 기준 설정")
+    st.sidebar.subheader("⚙️ 2-1. 리밸런싱 기준 설정")
 
     rebalance_type = st.sidebar.selectbox(
         "리밸런싱 방식을 선택하세요:",
@@ -307,16 +340,47 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     st.title("💼 포트폴리오 자산배분 백테스트 & 위험 분석")
     st.markdown("설정한 자산 비중과 리밸런싱 조건에 따른 **포트폴리오 총자산 성장 추이**와 **CAGR, MDD, 샤프 지수** 등을 분석합니다.")
 
+    # ------------------------------------------
+    # [추가] 2-2. 투자 방식 선택 옵션 (거치식 / 적립식)
+    # ------------------------------------------
+    st.sidebar.subheader("💡 2-2. 투자 방식 선택")
+    invest_type = st.sidebar.radio(
+        "투자 방식을 선택하세요:",
+        ["거치식", "적립식"],
+        horizontal=True
+    )
+    st.sidebar.markdown("---")
+
     st.sidebar.header("🔍 백테스트 조건 설정")
 
-    # [STEP 1] 날짜 및 초기 투자금 설정
-    st.sidebar.subheader("📅 기간 및 초기 자금")
+    # [STEP 1] 날짜 및 초기 투자금 설정 (투자 방식별 동적 입력창)
+    st.sidebar.subheader("📅 기간 및 투자 자금")
     default_start = datetime.date(2021, 1, 1)
     default_end = datetime.date.today()
-    start_date = st.sidebar.date_input("2-1. 시작 날짜", default_start, key="bt_start")
-    end_date = st.sidebar.date_input("2-2. 종료 날짜", default_end, key="bt_end")
+    start_date = st.sidebar.date_input("2-3-1. 시작 날짜", default_start, key="bt_start")
+    end_date = st.sidebar.date_input("2-3-2. 종료 날짜", default_end, key="bt_end")
     
-    init_balance = st.sidebar.number_input("2-3. 초기 투자금 ($ 또는 원)", value=10000, step=1000)
+    init_balance = st.sidebar.number_input(
+        "2-3-3. 초기 투자금 (거치금액) ($ 또는 원)", 
+        value=10000, 
+        step=1000,
+        help="시작일에 일시로 투입하는 금액입니다."
+    )
+
+    # [추가] 적립식 선택 시 적립 금액 및 적립 주기 옵션 제공
+    dca_amount = 0.0
+    dca_freq = "매월"
+    if invest_type == "적립식":
+        dca_amount = st.sidebar.number_input(
+            "2-3-4. 적립 금액 ($ 또는 원)", 
+            value=1000, 
+            step=100,
+            help="설정한 주기마다 추가로 적립 투입할 금액입니다."
+        )
+        dca_freq = st.sidebar.selectbox(
+            "2-3-5. 적립 주기",
+            ["매월", "매분기", "매년"]
+        )
 
     st.sidebar.markdown("---")
 
@@ -373,9 +437,10 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                     if df_clean.empty or len(df_clean) < 2:
                         st.error("해당 기간의 공통 거래일 데이터가 부족합니다.")
                     else:
-                        # 리밸런싱 연산 시뮬레이션
-                        portfolio_val = calculate_rebalanced_portfolio(
-                            df_clean, weights, rebalance_type, static_freq, abs_sum_threshold, single_dev_threshold, init_cash=init_balance
+                        # 리밸런싱 및 적립 연산 시뮬레이션
+                        portfolio_val, invested_cap = calculate_rebalanced_portfolio(
+                            df_clean, weights, rebalance_type, static_freq, abs_sum_threshold, single_dev_threshold, 
+                            init_cash=init_balance, invest_type=invest_type, dca_amount=dca_amount, dca_freq=dca_freq
                         )
 
                         # 지표 산출
@@ -383,7 +448,10 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         years = total_days / 365.25
                         
                         final_val = portfolio_val.iloc[-1]
-                        total_return_pct = ((final_val / init_balance) - 1) * 100
+                        final_invested = invested_cap.iloc[-1]  # 최종 투입 원금
+                        
+                        # 총 수익률 = (최종 자산 / 총 투입 원금 - 1) * 100
+                        total_return_pct = ((final_val / final_invested) - 1) * 100
                         cagr = (((final_val / init_balance) ** (1 / years)) - 1) * 100 if years > 0 else 0
 
                         # 일별 수익률 기반 변동성 및 샤프 지수
@@ -402,25 +470,31 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         # 결과 시각화
                         # --------------------------------------
                         st.subheader("📌 핵심 성과 지표 (Key Metrics)")
-                        st.caption(f"적용된 리밸런싱 방식: **{rebalance_type}** " + (f"({static_freq})" if static_freq else ""))
+                        st.caption(f"투자 방식: **{invest_type}** " + (f"({dca_freq} {dca_amount:,.0f} 적립)" if invest_type == "적립식" else "") + f" | 적용된 리밸런싱: **{rebalance_type}** " + (f"({static_freq})" if static_freq else ""))
 
-                        m1, m2, m3, m4, m5 = st.columns(5)
+                        m1, m2, m3, m4, m5, m6 = st.columns(6)
                         
                         m1.metric("최종 자산 평가액", f"{final_val:,.0f}")
-                        m2.metric("총 수익률", f"{total_return_pct:+.2f}%")
-                        m3.metric("CAGR (연평균 성장률)", f"{cagr:.2f}%")
-                        m4.metric("MDD (최대 낙폭)", f"{mdd:.2f}%")
-                        m5.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
+                        m2.metric("총 투입 원금", f"{final_invested:,.0f}")
+                        m3.metric("총 수익률", f"{total_return_pct:+.2f}%")
+                        m4.metric("CAGR (연평균 성장률)", f"{cagr:.2f}%")
+                        m5.metric("MDD (최대 낙폭)", f"{mdd:.2f}%")
+                        m6.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
 
                         st.markdown("---")
 
-                        # 차트 1: 자산 가치 상승 곡선
+                        # 차트 1: 자산 가치 상승 곡선 (+ 적립식인 경우 총 투입 원금 선 함께 표시)
                         st.subheader("📈 포트폴리오 자산 성장 추이")
                         fig_pf, ax_pf = plt.subplots(figsize=(12, 5))
                         plt.style.use('seaborn-v0_8-whitegrid')
 
-                        ax_pf.plot(portfolio_val.index, portfolio_val, label="Portfolio Value", color="#1f77b4", linewidth=2.5)
-                        ax_pf.set_title(f'Portfolio Growth ({df_clean.index[0].strftime("%Y-%m-%d")} ~ {df_clean.index[-1].strftime("%Y-%m-%d")})', fontsize=14, fontweight='bold')
+                        ax_pf.plot(portfolio_val.index, portfolio_val, label="Portfolio Value (평가액)", color="#1f77b4", linewidth=2.5)
+                        
+                        # 적립식일 때는 투입 원금 선을 함께 시각화하여 비주얼 강화
+                        if invest_type == "적립식":
+                            ax_pf.plot(invested_cap.index, invested_cap, label="Total Invested (투입 원금)", color="gray", linestyle="--", linewidth=1.8)
+
+                        ax_pf.set_title(f'Portfolio Growth [{invest_type}] ({df_clean.index[0].strftime("%Y-%m-%d")} ~ {df_clean.index[-1].strftime("%Y-%m-%d")})', fontsize=14, fontweight='bold')
                         ax_pf.set_ylabel("Asset Value", fontsize=11)
                         ax_pf.legend(loc='upper left')
                         st.pyplot(fig_pf)
