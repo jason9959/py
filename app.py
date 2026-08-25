@@ -176,7 +176,7 @@ abs_sum_threshold = None
 single_dev_threshold = None
 
 if app_mode == "2. 포트폴리오 자산배분 백테스트":
-    st.sidebar.subheader("⚙️ 2-1. 리밸런싱 기준 설정")
+    st.sidebar.subheader("⚙️ 1. 리밸런싱 기준 설정")
 
     rebalance_type = st.sidebar.selectbox(
         "리밸런싱 방식을 선택하세요:",
@@ -343,11 +343,10 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     # ------------------------------------------
     # [추가] 2-2. 투자 방식 선택 옵션 (거치식 / 적립식)
     # ------------------------------------------
-    st.sidebar.subheader("💡 2-2. 투자 방식 선택")
-    invest_type = st.sidebar.radio(
+    st.sidebar.subheader("💡 2. 투자 방식 선택")
+    invest_type = st.sidebar.selectbox(
         "투자 방식을 선택하세요:",
-        ["거치식", "적립식"],
-        horizontal=True
+        ["거치식", "적립식"]
     )
     st.sidebar.markdown("---")
 
@@ -357,11 +356,11 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     st.sidebar.subheader("📅 기간 및 투자 자금")
     default_start = datetime.date(2021, 1, 1)
     default_end = datetime.date.today()
-    start_date = st.sidebar.date_input("2-3-1. 시작 날짜", default_start, key="bt_start")
-    end_date = st.sidebar.date_input("2-3-2. 종료 날짜", default_end, key="bt_end")
+    start_date = st.sidebar.date_input("3-1. 시작 날짜", default_start, key="bt_start")
+    end_date = st.sidebar.date_input("3-2. 종료 날짜", default_end, key="bt_end")
     
     init_balance = st.sidebar.number_input(
-        "2-3-3. 초기 투자금 (거치금액) ($ 또는 원)", 
+        "3-3. 초기 투자금 (거치금액) ($ 또는 원)", 
         value=10000, 
         step=1000,
         help="시작일에 일시로 투입하는 금액입니다."
