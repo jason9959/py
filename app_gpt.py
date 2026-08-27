@@ -231,6 +231,51 @@ def make_schedule_dates(first_date, freq):
     return dates
 
 
+def calculate_single_asset_comparison(
+    prices,
+    initial_investment,
+    invest_type,
+    dca_amount=0.0,
+    dca_dates=None,
+    name="Comparison",
+):
+    """
+    포트폴리오와 동일한 초기 투자금/적립금을 사용하여
+    비교 종목 1개를 100% 보유했을 때의 실제 평가액을 계산한다.
+
+    거치식:
+        최초일에 초기 투자금 전액으로 매수
+
+    적립식:
+        최초일에 초기 투자금 전액으로 매수하고,
+        포트폴리오와 동일한 적립일마다 적립금 전액으로 추가 매수
+
+    비교 종목에는 리밸런싱을 적용하지 않는다.
+    """
+    prices = prices.dropna()
+
+    if prices.empty:
+        return pd.Series(dtype=float)
+
+    if initial_investment <= 0:
+        raise ValueError("비교 종목의 초기 투자금은 0보다 커야 합니다.")
+
+    first_price = float(prices.iloc[0])
+    shares = float(initial_investment) / first_price
+    values = []
+    dca_dates = set(dca_dates or [])
+
+    for i, (date, price) in enumerate(prices.items()):
+        price = float(price)
+
+        if i > 0 and invest_type == "적립식" and date in dca_dates:
+            shares += float(dca_amount) / price
+
+        values.append(shares * price)
+
+    return pd.Series(values, index=prices.index, name=f"{name} Value")
+
+
 def map_schedule_to_data_dates(data_index, first_date, freq):
     """
     최초 데이터 날짜 기준 예정일을 실제 데이터 날짜에 매핑한다.
@@ -1008,6 +1053,20 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
 
     st.sidebar.markdown("---")
 
+    # 비교 종목 (선택)
+    comparison_ticker_input = st.sidebar.text_input(
+        "📊 비교 종목 (선택)",
+        value="",
+        placeholder="예: SPY 또는 종목명",
+        key="bt_comparison_ticker",
+        help=(
+            "입력하면 포트폴리오와 동일한 초기 투자금/적립금으로 "
+            "해당 종목을 100% 보유한 결과를 자산 성장 그래프에 함께 표시합니다. "
+            "주가는 Adj Close를 사용합니다."
+        ),
+    )
+    comparison_ticker = resolve_ticker(comparison_ticker_input)
+
     # STEP 2 - 최대 10종목
     st.sidebar.subheader("⚖️ 포트폴리오 자산 비중 (%)")
     st.sidebar.caption("최대 10종목 / 비중의 합이 정확히 100%가 되도록 설정하세요.")
@@ -1119,6 +1178,34 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         end_date,
                     )
 
+                    # -----------------------------------------
+                    # 선택한 비교 종목 데이터 준비
+                    # -----------------------------------------
+                    comparison_values = None
+                    comparison_prices = None
+
+                    if comparison_ticker:
+                        comparison_df = download_adjusted_close(
+                            [comparison_ticker],
+                            common_start - pd.Timedelta(days=7),
+                            common_end,
+                        )
+
+                        if comparison_ticker not in comparison_df.columns:
+                            raise ValueError(
+                                f"비교 종목 '{comparison_ticker}'의 가격 데이터를 가져오지 못했습니다."
+                            )
+
+                        comparison_prices = comparison_df[comparison_ticker].reindex(
+                            df_clean.index
+                        ).ffill()
+
+                        if comparison_prices.isna().any():
+                            raise ValueError(
+                                f"비교 종목 '{comparison_ticker}'의 공통 백테스트 시작일 "
+                                f"({common_start.strftime('%Y-%m-%d')})에 사용할 가격 데이터가 없습니다."
+                            )
+
                     (
                         portfolio_val,
                         invested_cap,
@@ -1136,6 +1223,23 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         dca_amount=float(dca_amount),
                         dca_freq=dca_freq,
                     )
+
+                    # -----------------------------------------
+                    # 비교 종목 평가액 계산
+                    # -----------------------------------------
+                    if comparison_ticker and comparison_prices is not None:
+                        comparison_dca_dates = set(
+                            event_df.loc[event_df["is_dca"], "date"]
+                        )
+
+                        comparison_values = calculate_single_asset_comparison(
+                            prices=comparison_prices,
+                            initial_investment=float(init_balance),
+                            invest_type=invest_type,
+                            dca_amount=float(dca_amount),
+                            dca_dates=comparison_dca_dates,
+                            name=comparison_ticker,
+                        )
 
                     # -----------------------------------------
                     # 지표 산출
@@ -1254,6 +1358,15 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         label="Portfolio Value (평가액)",
                         linewidth=2.5,
                     )
+
+                    if comparison_values is not None:
+                        ax_pf.plot(
+                            comparison_values.index,
+                            comparison_values,
+                            label=f"Comparison: {comparison_ticker}",
+                            linestyle="--",
+                            linewidth=2.0,
+                        )
 
                     if invest_type == "적립식":
                         ax_pf.plot(
