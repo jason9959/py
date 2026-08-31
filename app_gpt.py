@@ -1020,8 +1020,6 @@ st.sidebar.header("🔍 백테스트 조건 설정")
 # STEP 1
 st.sidebar.subheader("📅 기간 및 투자 자금")
 
-default_end = datetime.date.today()
-default_start = default_end - datetime.timedelta(days=365)
 
 "3-1. 시작 날짜",
 start_date = st.sidebar.date_input(
