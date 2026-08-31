@@ -1018,11 +1018,15 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     start_date = st.sidebar.date_input(
         "3-1. 시작 날짜",
         default_start,
+									min_value=datetime.date(1900, 1, 1),
+									max_value=datetime.date.today(),
         key="bt_start",
     )
     end_date = st.sidebar.date_input(
         "3-2. 종료 날짜",
         default_end,
+									min_value=datetime.date(1900, 1, 1),
+									max_value=datetime.date.today(),
         key="bt_end",
     )
 
