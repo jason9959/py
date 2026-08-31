@@ -10,6 +10,7 @@ import requests
 import base64
 import json
 
+"""
 GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
 GITHUB_FILE_PATH = "saved_data/simulations.json"
@@ -57,6 +58,7 @@ saved_simulations = load_saved_simulations()
 
 st.write("GitHub 저장 데이터:")
 st.write(saved_simulations)
+"""
 
 # =========================================================
 # 1. 웹페이지 기본 설정
