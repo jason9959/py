@@ -12,6 +12,8 @@ import numpy as np
 # =========================================================
 st.set_page_config(page_title="통합 포트폴리오 대시보드", layout="wide")
 
+if "last_backtest_result" not in st.session_state:
+    st.session_state["last_backtest_result"] = None
 # =========================================================
 # 주요 종목 검색용 데이터베이스
 # =========================================================
@@ -1163,7 +1165,7 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
         )
 
     # STEP 3
-    if main_run_button:
+    if main_run_button or st.session_state["last_backtest_result"] is not None:
 
         if start_date >= end_date:
             st.error("시작 날짜는 종료 날짜보다 앞서야 합니다.")
@@ -1241,23 +1243,42 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                                 f"({common_start.strftime('%Y-%m-%d')})에 사용할 가격 데이터가 없습니다."
                             )
 
-                    (
-                        portfolio_val,
-                        invested_cap,
-                        contribution_series,
-                        event_df,
-                    ) = calculate_rebalanced_portfolio(
-                        df_clean,
-                        weights,
-                        rebalance_type,
-                        static_freq,
-                        abs_sum_threshold,
-                        single_dev_threshold,
-                        init_cash=float(init_balance),
-                        invest_type=invest_type,
-                        dca_amount=float(dca_amount),
-                        dca_freq=dca_freq,
-                    )
+                    if main_run_button:
+                        (        
+                            portfolio_val,
+                            invested_cap,
+                            contribution_series,
+                            event_df,
+                        ) = calculate_rebalanced_portfolio(
+                            df_clean,
+                            weights,
+                            rebalance_type,
+                            static_freq,
+                            abs_sum_threshold,
+                            single_dev_threshold,
+                            init_cash=float(init_balance),
+                            invest_type=invest_type,
+                            dca_amount=float(dca_amount),
+                            dca_freq=dca_freq,
+                        )
+
+                    
+                        st.session_state["last_backtest_result"] = {
+                            "portfolio_val": portfolio_val.copy(),
+                            "invested_cap": invested_cap.copy(),
+                            "contribution_series": contribution_series.copy(),
+                            "event_df": event_df.copy(),
+                        }
+
+                    else:
+                    
+                        result = st.session_state["last_backtest_result"]
+                    
+                        portfolio_val = result["portfolio_val"].copy()
+                        invested_cap = result["invested_cap"].copy()
+                        contribution_series = result["contribution_series"].copy()
+                        event_df = result["event_df"].copy()
+                    
 
                     # -----------------------------------------
                     # 비교 종목 평가액 계산
