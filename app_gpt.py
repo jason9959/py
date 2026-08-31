@@ -833,17 +833,36 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     # STEP 1
     st.sidebar.subheader("📅 조회 기간 선택")
 
-    default_start = datetime.date(2026, 1, 1)
     default_end = datetime.date.today()
+    default_start = default_end - datetime.timedelta(days=365)
 
     start_date = st.sidebar.date_input(
-        "1-1. 시작 날짜",
+        "3-1. 시작 날짜",
         default_start,
+        min_value=datetime.date(1900, 1, 1),
+        max_value=datetime.date.today(),
+        key="bt_start",
     )
+
     end_date = st.sidebar.date_input(
-        "1-2. 종료 날짜",
+        "3-2. 종료 날짜",
         default_end,
+        min_value=datetime.date(1900, 1, 1),
+        max_value=datetime.date.today(),
+        key="bt_end",
     )
+       
+    # default_start = datetime.date(2026, 1, 1)
+    # default_end = datetime.date.today()
+    
+    # start_date = st.sidebar.date_input(
+    #     "1-1. 시작 날짜",
+    #     default_start,
+    # )
+    # end_date = st.sidebar.date_input(
+    #     "1-2. 종료 날짜",
+    #     default_end,
+    # )
 
     st.sidebar.markdown("---")
 
@@ -1012,20 +1031,36 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     # STEP 1
     st.sidebar.subheader("📅 기간 및 투자 자금")
 
-    default_start = datetime.date(2021, 1, 1)
     default_end = datetime.date.today()
+    default_start = default_end - datetime.timedelta(days=365)
 
     start_date = st.sidebar.date_input(
         "3-1. 시작 날짜",
         default_start,
+        min_value=datetime.date(1900, 1, 1),
+        max_value=datetime.date.today(),
         key="bt_start",
     )
+
     end_date = st.sidebar.date_input(
         "3-2. 종료 날짜",
         default_end,
+        min_value=datetime.date(1900, 1, 1),
+        max_value=datetime.date.today(),
         key="bt_end",
     )
-
+       
+    # default_start = datetime.date(2026, 1, 1)
+    # default_end = datetime.date.today()
+    
+    # start_date = st.sidebar.date_input(
+    #     "1-1. 시작 날짜",
+    #     default_start,
+    # )
+    # end_date = st.sidebar.date_input(
+    #     "1-2. 종료 날짜",
+    #     default_end,
+    # )
     init_balance = st.sidebar.number_input(
         "3-3. 초기 투자금 (거치금액) ($ 또는 원)",
         value=10000,
