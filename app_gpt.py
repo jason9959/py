@@ -6,6 +6,57 @@ import datetime
 import re
 import pandas as pd
 import numpy as np
+import requests
+import base64
+import json
+
+GITHUB_OWNER = "jason9959"
+GITHUB_REPO = "py"
+GITHUB_FILE_PATH = "saved_data/simulations.json"
+
+def load_saved_simulations():
+    """
+    GitHub의 saved_data/simulations.json을 읽어서
+    Python dict 형태로 반환한다.
+    """
+
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+
+        url = (
+            f"https://api.github.com/repos/"
+            f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        response = requests.get(url, headers=headers, timeout=10)
+
+        if response.status_code != 200:
+            st.error(
+                f"GitHub 파일 읽기 실패 "
+                f"(HTTP {response.status_code})"
+            )
+            return {}
+
+        data = response.json()
+
+        # GitHub API는 파일 내용을 Base64로 반환한다.
+        content = base64.b64decode(data["content"]).decode("utf-8")
+
+        return json.loads(content)
+
+    except Exception as e:
+        st.error(f"저장 데이터 읽기 오류: {e}")
+        return {}
+
+saved_simulations = load_saved_simulations()
+
+st.write("GitHub 저장 데이터:")
+st.write(saved_simulations)
 
 # =========================================================
 # 1. 웹페이지 기본 설정
