@@ -1441,39 +1441,6 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         event_df = result["event_df"].copy()
 
                     # -----------------------------------------
-                    # Save 버튼 기능
-                    # -----------------------------------------
-                    if save_button:
-
-                        if not save_name.strip():
-                            st.warning("저장 이름을 입력해주세요.")
-                    
-                        elif st.session_state.get("last_backtest_result") is None:
-                            st.warning("먼저 백테스트를 실행해주세요.")
-                    
-                        else:
-                            saved_simulations = load_saved_simulations()
-                    
-                            result = st.session_state["last_backtest_result"]
-                    
-                            saved_simulations[save_name.strip()] = {
-                                "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    
-                                "result": {
-                                    "portfolio_val": result["portfolio_val"].to_dict(),
-                                    "invested_cap": result["invested_cap"].to_dict(),
-                                    "contribution_series": result["contribution_series"].to_dict(),
-                                    "event_df": result["event_df"].to_dict(),
-                                }
-                            }
-                    
-                            if save_simulations_to_github(saved_simulations):
-                                st.success(
-                                    f"'{save_name.strip()}' 저장 완료!"
-                                )
-                                st.rerun()
-
-                    # -----------------------------------------
                     # 비교 종목 평가액 계산
                     # -----------------------------------------
                     if comparison_ticker and comparison_prices is not None:
@@ -1733,3 +1700,60 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                     st.error(
                         f"백테스트 계산 중 오류가 발생했습니다: {e}"
                     )
+                
+                # -----------------------------------------
+                # Save 버튼 기능
+                # -----------------------------------------
+                if save_button:
+                
+                    if not save_name.strip():
+                        st.warning("저장 이름을 입력해주세요.")
+                
+                    elif st.session_state.get("last_backtest_result") is None:
+                        st.warning("먼저 백테스트를 실행해주세요.")
+                
+                    else:
+                        saved_simulations = load_saved_simulations()
+                
+                        result = st.session_state["last_backtest_result"]
+                
+                        # 날짜를 문자열로 변환하여 JSON 저장 가능하도록 처리
+                        portfolio_val = result["portfolio_val"].copy()
+                        invested_cap = result["invested_cap"].copy()
+                        contribution_series = result["contribution_series"].copy()
+                        event_df = result["event_df"].copy()
+                
+                        if hasattr(portfolio_val.index, "strftime"):
+                            portfolio_val.index = portfolio_val.index.strftime("%Y-%m-%d")
+                
+                        if hasattr(invested_cap.index, "strftime"):
+                            invested_cap.index = invested_cap.index.strftime("%Y-%m-%d")
+                
+                        if hasattr(contribution_series.index, "strftime"):
+                            contribution_series.index = contribution_series.index.strftime("%Y-%m-%d")
+                
+                        if not event_df.empty:
+                            event_df = event_df.copy()
+                
+                            for col in event_df.columns:
+                                if pd.api.types.is_datetime64_any_dtype(event_df[col]):
+                                    event_df[col] = event_df[col].dt.strftime("%Y-%m-%d")
+                
+                        saved_simulations[save_name.strip()] = {
+                            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                
+                            "result": {
+                                "portfolio_val": portfolio_val.to_dict(),
+                                "invested_cap": invested_cap.to_dict(),
+                                "contribution_series": contribution_series.to_dict(),
+                                "event_df": event_df.to_dict(),
+                            }
+                        }
+                
+                        if save_simulations_to_github(saved_simulations):
+                            st.success(
+                                f"'{save_name.strip()}' 저장 완료!"
+                            )
+                            st.rerun()
+
+
