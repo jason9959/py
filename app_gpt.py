@@ -2,7 +2,7 @@
 import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
-from datetime import datetime
+import datetime
 import re
 import pandas as pd
 import numpy as np
