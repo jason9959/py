@@ -57,9 +57,36 @@ def load_saved_simulations():
 
 saved_simulations = load_saved_simulations()
 
-st.write("GitHub 저장 데이터:")
-st.write(saved_simulations)
+st.markdown("### 📂 저장된 시뮬레이션")
 
+if saved_simulations:
+    saved_names = list(saved_simulations.keys())
+
+    selected_simulation = st.selectbox(
+        "저장된 시뮬레이션",
+        saved_names,
+        key="selected_saved_simulation"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        load_button = st.button(
+            "📥 불러오기",
+            use_container_width=True
+        )
+
+    with col2:
+        delete_button = st.button(
+            "🗑️ 삭제",
+            use_container_width=True
+        )
+
+else:
+    st.info("저장된 시뮬레이션이 없습니다.")
+    selected_simulation = None
+    load_button = False
+    delete_button = False
 
 # =========================================================
 # 1. 웹페이지 기본 설정
