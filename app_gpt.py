@@ -10,6 +10,8 @@ import requests
 import base64
 import json
 
+# Streamlit 페이지 설정은 다른 Streamlit 명령보다 먼저 실행
+st.set_page_config(page_title="통합 포트폴리오 대시보드", layout="wide")
 
 GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
@@ -122,59 +124,9 @@ def save_simulations_to_github(simulations):
         st.error(f"GitHub 저장 오류: {e}")
         return False
 
-saved_simulations = load_saved_simulations()
-
-st.markdown("### 📂 저장된 시뮬레이션")
-
-st.markdown("### 💾 현재 결과 저장")
-
-save_name = st.text_input(
-    "저장 이름",
-    placeholder="예: QQQ+SPY 장기 적립식",
-    key="save_simulation_name"
-)
-
-save_button = st.button(
-    "💾 현재 결과 저장",
-    use_container_width=True
-)
-
-if saved_simulations:
-    saved_names = list(saved_simulations.keys())
-
-    selected_simulation = st.selectbox(
-        "저장된 시뮬레이션",
-        saved_names,
-        key="selected_saved_simulation"
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        load_button = st.button(
-            "📥 불러오기",
-            use_container_width=True
-        )
-
-    with col2:
-        delete_button = st.button(
-            "🗑️ 삭제",
-            use_container_width=True
-        )
-
-else:
-    st.info("저장된 시뮬레이션이 없습니다.")
-    selected_simulation = None
-    load_button = False
-    delete_button = False
-
 # =========================================================
-# 1. 웹페이지 기본 설정
+# 주요 종목 검색용 데이터베이스
 # =========================================================
-st.set_page_config(page_title="통합 포트폴리오 대시보드", layout="wide")
-
-if "last_backtest_result" not in st.session_state:
-    st.session_state["last_backtest_result"] = None
 # =========================================================
 # 주요 종목 검색용 데이터베이스
 # =========================================================
@@ -912,6 +864,77 @@ app_mode = st.sidebar.selectbox(
     ],
 )
 
+# =========================================================
+# 저장된 시뮬레이션 / 현재 결과 저장
+# =========================================================
+saved_simulations = load_saved_simulations()
+
+if "last_backtest_result" not in st.session_state:
+    st.session_state["last_backtest_result"] = None
+
+if "last_return_comparison_result" not in st.session_state:
+    st.session_state["last_return_comparison_result"] = None
+
+# 현재 선택한 기능에 맞는 저장 데이터만 표시
+if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
+    current_save_type = "return_comparison"
+else:
+    current_save_type = "portfolio_backtest"
+
+filtered_saved_simulations = {}
+for name, item in saved_simulations.items():
+    item_type = item.get("type")
+
+    # 기존에 저장된 포트폴리오 데이터(type 없음)는 포트폴리오 데이터로 간주
+    if item_type is None:
+        item_type = "portfolio_backtest"
+
+    if item_type == current_save_type:
+        filtered_saved_simulations[name] = item
+
+st.markdown("### 📂 저장된 시뮬레이션")
+
+if filtered_saved_simulations:
+    saved_names = list(filtered_saved_simulations.keys())
+
+    selected_simulation = st.selectbox(
+        "저장된 시뮬레이션",
+        saved_names,
+        key="selected_saved_simulation"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        load_button = st.button(
+            "📥 불러오기",
+            use_container_width=True
+        )
+
+    with col2:
+        delete_button = st.button(
+            "🗑️ 삭제",
+            use_container_width=True
+        )
+else:
+    st.info("저장된 시뮬레이션이 없습니다.")
+    selected_simulation = None
+    load_button = False
+    delete_button = False
+
+st.markdown("### 💾 현재 결과 저장")
+
+save_name = st.text_input(
+    "저장 이름",
+    placeholder="예: QQQ+SPY 장기 적립식",
+    key="save_simulation_name"
+)
+
+save_button = st.button(
+    "💾 현재 결과 저장",
+    use_container_width=True
+)
+
 st.sidebar.markdown("---")
 main_run_button = st.sidebar.button(
     "🚀 선택한 기능 실행하기",
@@ -1104,6 +1127,15 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                 indexed_df = (
                     common_df / common_df.iloc[0]
                 ) * 100.0
+
+                # 기능 1의 마지막 실행 결과를 세션에 보관
+                st.session_state["last_return_comparison_result"] = {
+                    "indexed_df": indexed_df.copy(),
+                    "final_tickers": final_tickers.copy(),
+                    "common_start": common_start,
+                    "common_end": common_end,
+                    "ticker_to_slot_map": ticker_to_slot_map.copy(),
+                }
 
                 st.subheader(
                     f"📈 상대 성과 추이 그래프 "
@@ -1709,51 +1741,93 @@ if save_button:
     if not save_name.strip():
         st.warning("저장 이름을 입력해주세요.")
 
-    elif st.session_state.get("last_backtest_result") is None:
-        st.warning("먼저 백테스트를 실행해주세요.")
+    elif app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
+        result = st.session_state.get("last_return_comparison_result")
+
+        if result is None:
+            st.warning("먼저 수익률 비교를 실행해주세요.")
+        else:
+            saved_simulations = load_saved_simulations()
+
+            indexed_df = result["indexed_df"].copy()
+            indexed_df.index = indexed_df.index.strftime("%Y-%m-%d")
+
+            conditions = {
+                "tickers": result["final_tickers"],
+                "start_date": result["common_start"].strftime("%Y-%m-%d"),
+                "end_date": result["common_end"].strftime("%Y-%m-%d"),
+            }
+
+            saved_simulations[save_name.strip()] = {
+                "type": "return_comparison",
+                "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "conditions": conditions,
+                "result": {
+                    "indexed_df": indexed_df.to_dict(),
+                },
+            }
+
+            if save_simulations_to_github(saved_simulations):
+                st.success(f"'{save_name.strip()}' 저장 완료!")
+                st.rerun()
 
     else:
-        saved_simulations = load_saved_simulations()
+        result = st.session_state.get("last_backtest_result")
 
-        result = st.session_state["last_backtest_result"]
+        if result is None:
+            st.warning("먼저 백테스트를 실행해주세요.")
+        else:
+            saved_simulations = load_saved_simulations()
 
-        # 날짜를 문자열로 변환하여 JSON 저장 가능하도록 처리
-        portfolio_val = result["portfolio_val"].copy()
-        invested_cap = result["invested_cap"].copy()
-        contribution_series = result["contribution_series"].copy()
-        event_df = result["event_df"].copy()
+            portfolio_val = result["portfolio_val"].copy()
+            invested_cap = result["invested_cap"].copy()
+            contribution_series = result["contribution_series"].copy()
+            event_df = result["event_df"].copy()
 
-        if hasattr(portfolio_val.index, "strftime"):
-            portfolio_val.index = portfolio_val.index.strftime("%Y-%m-%d")
+            if hasattr(portfolio_val.index, "strftime"):
+                portfolio_val.index = portfolio_val.index.strftime("%Y-%m-%d")
 
-        if hasattr(invested_cap.index, "strftime"):
-            invested_cap.index = invested_cap.index.strftime("%Y-%m-%d")
+            if hasattr(invested_cap.index, "strftime"):
+                invested_cap.index = invested_cap.index.strftime("%Y-%m-%d")
 
-        if hasattr(contribution_series.index, "strftime"):
-            contribution_series.index = contribution_series.index.strftime("%Y-%m-%d")
+            if hasattr(contribution_series.index, "strftime"):
+                contribution_series.index = contribution_series.index.strftime("%Y-%m-%d")
 
-        if not event_df.empty:
-            event_df = event_df.copy()
+            if not event_df.empty:
+                event_df = event_df.copy()
 
-            for col in event_df.columns:
-                if pd.api.types.is_datetime64_any_dtype(event_df[col]):
-                    event_df[col] = event_df[col].dt.strftime("%Y-%m-%d")
+                for col in event_df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(event_df[col]):
+                        event_df[col] = event_df[col].dt.strftime("%Y-%m-%d")
 
-        saved_simulations[save_name.strip()] = {
-            "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-
-            "result": {
-                "portfolio_val": portfolio_val.to_dict(),
-                "invested_cap": invested_cap.to_dict(),
-                "contribution_series": contribution_series.to_dict(),
-                "event_df": event_df.to_dict(),
+            # 현재 화면의 기능 2 조건도 함께 저장
+            conditions = {
+                "portfolio": input_portfolio,
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": end_date.strftime("%Y-%m-%d"),
+                "initial_balance": float(init_balance),
+                "invest_type": invest_type,
+                "dca_amount": float(dca_amount),
+                "dca_freq": dca_freq,
+                "rebalance_type": rebalance_type,
+                "static_freq": static_freq,
+                "abs_sum_threshold": abs_sum_threshold,
+                "single_dev_threshold": single_dev_threshold,
+                "comparison_ticker": comparison_ticker,
             }
-        }
 
-        if save_simulations_to_github(saved_simulations):
-            st.success(
-                f"'{save_name.strip()}' 저장 완료!"
-            )
-            st.rerun()
+            saved_simulations[save_name.strip()] = {
+                "type": "portfolio_backtest",
+                "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "conditions": conditions,
+                "result": {
+                    "portfolio_val": portfolio_val.to_dict(),
+                    "invested_cap": invested_cap.to_dict(),
+                    "contribution_series": contribution_series.to_dict(),
+                    "event_df": event_df.to_dict(),
+                }
+            }
 
-
+            if save_simulations_to_github(saved_simulations):
+                st.success(f"'{save_name.strip()}' 저장 완료!")
+                st.rerun()
