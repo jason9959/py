@@ -10,16 +10,16 @@ import requests
 import base64
 import json
 
-"""
+
 GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
 GITHUB_FILE_PATH = "saved_data/simulations.json"
-"""
+
 """
     GitHub의 saved_data/simulations.json을 읽어서
     Python dict 형태로 반환한다.
 """
-"""
+
 def load_saved_simulations():
     
     try:
