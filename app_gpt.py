@@ -867,6 +867,92 @@ app_mode = st.sidebar.selectbox(
 # =========================================================
 # 저장된 시뮬레이션 / 현재 결과 저장
 # =========================================================
+
+def restore_saved_simulation(name, item):
+    """저장된 시뮬레이션의 조건과 결과를 Session State에 복원한다."""
+    item_type = item.get("type") or "portfolio_backtest"
+    conditions = item.get("conditions", {})
+    result = item.get("result", {})
+
+    if item_type == "return_comparison":
+        tickers = conditions.get("tickers", [])
+        requested_start = conditions.get("requested_start_date", conditions.get("start_date"))
+        requested_end = conditions.get("requested_end_date", conditions.get("end_date"))
+
+        for i in range(10):
+            st.session_state[f"stock_input_{i+1}"] = tickers[i] if i < len(tickers) else ""
+
+        if requested_start:
+            st.session_state["bt_start"] = datetime.date.fromisoformat(requested_start)
+        if requested_end:
+            st.session_state["bt_end"] = datetime.date.fromisoformat(requested_end)
+
+        indexed_df = pd.DataFrame(result.get("indexed_df", {}))
+        if not indexed_df.empty:
+            indexed_df.index = pd.to_datetime(indexed_df.index)
+
+        st.session_state["last_return_comparison_result"] = {
+            "indexed_df": indexed_df,
+            "final_tickers": conditions.get("tickers", list(indexed_df.columns)),
+            "common_start": pd.Timestamp(conditions.get("common_start", requested_start)),
+            "common_end": pd.Timestamp(conditions.get("common_end", requested_end)),
+            "ticker_to_slot_map": {
+                tk: f"종목 {i+1}" for i, tk in enumerate(conditions.get("tickers", []))
+            },
+        }
+        st.session_state["loaded_return_comparison"] = True
+
+    else:
+        portfolio = conditions.get("portfolio", [])
+
+        for i in range(10):
+            if i < len(portfolio):
+                st.session_state[f"bt_tk_{i+1}"] = portfolio[i].get("ticker", "")
+                st.session_state[f"bt_wt_{i+1}"] = portfolio[i].get("weight", 0)
+            else:
+                st.session_state[f"bt_tk_{i+1}"] = ""
+                st.session_state[f"bt_wt_{i+1}"] = 0
+
+        if conditions.get("start_date"):
+            st.session_state["bt_start"] = datetime.date.fromisoformat(conditions["start_date"])
+        if conditions.get("end_date"):
+            st.session_state["bt_end"] = datetime.date.fromisoformat(conditions["end_date"])
+
+        st.session_state["invest_type"] = conditions.get("invest_type", "거치식")
+        st.session_state["bt_init_balance"] = conditions.get("initial_balance", 10000)
+        st.session_state["bt_dca_amount"] = conditions.get("dca_amount", 1000)
+        st.session_state["bt_dca_freq"] = conditions.get("dca_freq", "매월")
+        st.session_state["bt_rebalance_type"] = conditions.get("rebalance_type", "정적 리밸런싱")
+        st.session_state["bt_static_freq"] = conditions.get("static_freq", "매일")
+        st.session_state["bt_abs_sum_threshold"] = conditions.get("abs_sum_threshold", 10.0)
+        single = conditions.get("single_dev_threshold")
+        st.session_state["bt_single_dev_input"] = "" if single is None else str(single)
+        st.session_state["bt_comparison_ticker"] = conditions.get("comparison_ticker", "") or ""
+
+        def restore_series(key):
+            data = result.get(key, {})
+            series = pd.Series(data, dtype=float)
+            if not series.empty:
+                series.index = pd.to_datetime(series.index)
+            return series
+
+        portfolio_val = restore_series("portfolio_val")
+        invested_cap = restore_series("invested_cap")
+        contribution_series = restore_series("contribution_series")
+        event_df = pd.DataFrame(result.get("event_df", {}))
+        if "date" in event_df.columns:
+            event_df["date"] = pd.to_datetime(event_df["date"])
+
+        st.session_state["last_backtest_result"] = {
+            "portfolio_val": portfolio_val,
+            "invested_cap": invested_cap,
+            "contribution_series": contribution_series,
+            "event_df": event_df,
+        }
+        st.session_state["loaded_portfolio_backtest"] = True
+
+    st.session_state["loaded_simulation_name"] = name
+
 saved_simulations = load_saved_simulations()
 
 if "last_backtest_result" not in st.session_state:
@@ -874,6 +960,12 @@ if "last_backtest_result" not in st.session_state:
 
 if "last_return_comparison_result" not in st.session_state:
     st.session_state["last_return_comparison_result"] = None
+
+if "loaded_return_comparison" not in st.session_state:
+    st.session_state["loaded_return_comparison"] = False
+
+if "loaded_portfolio_backtest" not in st.session_state:
+    st.session_state["loaded_portfolio_backtest"] = False
 
 # 현재 선택한 기능에 맞는 저장 데이터만 표시
 if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
@@ -883,57 +975,68 @@ else:
 
 filtered_saved_simulations = {}
 for name, item in saved_simulations.items():
-    item_type = item.get("type")
-
-    # 기존에 저장된 포트폴리오 데이터(type 없음)는 포트폴리오 데이터로 간주
-    if item_type is None:
-        item_type = "portfolio_backtest"
-
+    item_type = item.get("type") or "portfolio_backtest"
     if item_type == current_save_type:
         filtered_saved_simulations[name] = item
 
-st.markdown("### 📂 저장된 시뮬레이션")
+save_col, load_col = st.columns(2)
 
-if filtered_saved_simulations:
-    saved_names = list(filtered_saved_simulations.keys())
-
-    selected_simulation = st.selectbox(
-        "저장된 시뮬레이션",
-        saved_names,
-        key="selected_saved_simulation"
+with save_col:
+    st.markdown("### 💾 현재 결과 저장")
+    save_name = st.text_input(
+        "저장 이름",
+        placeholder="예: QQQ+SPY 장기 적립식",
+        key="save_simulation_name",
+    )
+    save_button = st.button(
+        "💾 저장",
+        use_container_width=True,
     )
 
-    col1, col2 = st.columns(2)
+with load_col:
+    st.markdown("### 📂 저장된 시뮬레이션")
 
-    with col1:
-        load_button = st.button(
-            "📥 불러오기",
-            use_container_width=True
+    if filtered_saved_simulations:
+        saved_names = list(filtered_saved_simulations.keys())
+        selected_simulation = st.selectbox(
+            "저장된 시뮬레이션",
+            saved_names,
+            key="selected_saved_simulation",
         )
 
-    with col2:
-        delete_button = st.button(
-            "🗑️ 삭제",
-            use_container_width=True
-        )
-else:
-    st.info("저장된 시뮬레이션이 없습니다.")
-    selected_simulation = None
-    load_button = False
-    delete_button = False
+        load_col1, load_col2 = st.columns(2)
+        with load_col1:
+            load_button = st.button(
+                "📥 불러오기",
+                use_container_width=True,
+            )
+        with load_col2:
+            delete_button = st.button(
+                "🗑️ 삭제",
+                use_container_width=True,
+            )
+    else:
+        st.info("저장된 시뮬레이션이 없습니다.")
+        selected_simulation = None
+        load_button = False
+        delete_button = False
 
-st.markdown("### 💾 현재 결과 저장")
+# 불러오기 / 삭제는 현재 기능에 맞는 저장 데이터만 대상으로 한다.
+if load_button and selected_simulation:
+    restore_saved_simulation(
+        selected_simulation,
+        filtered_saved_simulations[selected_simulation],
+    )
+    st.success(f"'{selected_simulation}'을(를) 불러왔습니다.")
+    st.rerun()
 
-save_name = st.text_input(
-    "저장 이름",
-    placeholder="예: QQQ+SPY 장기 적립식",
-    key="save_simulation_name"
-)
-
-save_button = st.button(
-    "💾 현재 결과 저장",
-    use_container_width=True
-)
+if delete_button and selected_simulation:
+    saved_simulations = load_saved_simulations()
+    if selected_simulation in saved_simulations:
+        del saved_simulations[selected_simulation]
+        if save_simulations_to_github(saved_simulations):
+            st.success(f"'{selected_simulation}' 삭제 완료!")
+            st.rerun()
 
 st.sidebar.markdown("---")
 main_run_button = st.sidebar.button(
@@ -957,12 +1060,14 @@ if app_mode == "2. 포트폴리오 자산배분 백테스트":
     rebalance_type = st.sidebar.selectbox(
         "리밸런싱 방식을 선택하세요:",
         ["정적 리밸런싱", "동적 리밸런싱"],
+        key="bt_rebalance_type",
     )
 
     if rebalance_type == "정적 리밸런싱":
         static_freq = st.sidebar.selectbox(
             "리밸런싱 주기 선택:",
             ["매일", "월간", "분기", "반기", "연간"],
+            key="bt_static_freq",
         )
 
     elif rebalance_type == "동적 리밸런싱":
@@ -979,12 +1084,14 @@ if app_mode == "2. 포트폴리오 자산배분 백테스트":
                 "각 종목의 현재 비중과 목표 비중 차이의 절대값 합계가 "
                 "이 값을 초과하면 리밸런싱합니다."
             ),
+            key="bt_abs_sum_threshold",
         )
 
         single_dev_input = st.sidebar.text_input(
             "2. 개별 종목 변동률 임계값 (%) [선택]",
             value="",
             placeholder="예: 5.0 (미입력 시 미적용)",
+            key="bt_single_dev_input",
         )
 
         if single_dev_input.strip():
@@ -1107,35 +1214,45 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
             "최소 1개 이상의 올바른 종목을 사이드바에 입력해 주세요."
         )
 
-    elif main_run_button:
+    elif main_run_button or st.session_state.get("loaded_return_comparison", False):
         with st.spinner(
             "Yahoo Finance에서 조정가격(Adj Close)을 불러오는 중..."
         ):
             try:
-                common_df, starts, ends, common_start, common_end = (
-                    prepare_common_price_data(
-                        ordered_target_tickers,
-                        start_date,
-                        end_date,
+                if st.session_state.get("loaded_return_comparison", False) and not main_run_button:
+                    loaded = st.session_state["last_return_comparison_result"]
+                    indexed_df = loaded["indexed_df"].copy()
+                    final_tickers = loaded["final_tickers"].copy()
+                    common_start = pd.Timestamp(loaded["common_start"])
+                    common_end = pd.Timestamp(loaded["common_end"])
+                    ticker_to_slot_map = loaded["ticker_to_slot_map"].copy()
+                    base_date = common_start.strftime("%Y-%m-%d")
+                    st.session_state["loaded_return_comparison"] = False
+                else:
+                    common_df, starts, ends, common_start, common_end = (
+                        prepare_common_price_data(
+                            ordered_target_tickers,
+                            start_date,
+                            end_date,
+                        )
                     )
-                )
 
-                final_tickers = list(common_df.columns)
-                base_date = common_df.index[0].strftime("%Y-%m-%d")
+                    final_tickers = list(common_df.columns)
+                    base_date = common_df.index[0].strftime("%Y-%m-%d")
 
-                # 기준일 100
-                indexed_df = (
-                    common_df / common_df.iloc[0]
-                ) * 100.0
+                    # 기준일 100
+                    indexed_df = (
+                        common_df / common_df.iloc[0]
+                    ) * 100.0
 
-                # 기능 1의 마지막 실행 결과를 세션에 보관
-                st.session_state["last_return_comparison_result"] = {
-                    "indexed_df": indexed_df.copy(),
-                    "final_tickers": final_tickers.copy(),
-                    "common_start": common_start,
-                    "common_end": common_end,
-                    "ticker_to_slot_map": ticker_to_slot_map.copy(),
-                }
+                    # 기능 1의 마지막 실행 결과를 세션에 보관
+                    st.session_state["last_return_comparison_result"] = {
+                        "indexed_df": indexed_df.copy(),
+                        "final_tickers": final_tickers.copy(),
+                        "common_start": common_start,
+                        "common_end": common_end,
+                        "ticker_to_slot_map": ticker_to_slot_map.copy(),
+                    }
 
                 st.subheader(
                     f"📈 상대 성과 추이 그래프 "
@@ -1261,6 +1378,7 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
         value=10000,
         min_value=1,
         step=1000,
+        key="bt_init_balance",
         help="시작일에 일시로 투입하는 금액입니다.",
     )
 
@@ -1274,11 +1392,13 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
             min_value=1,
             step=100,
             help="설정한 주기마다 추가로 적립 투입할 금액입니다.",
+            key="bt_dca_amount",
         )
 
         dca_freq = st.sidebar.selectbox(
             "2-3-5. 적립 주기",
             ["매월", "매분기", "매년"],
+            key="bt_dca_freq",
         )
 
     st.sidebar.markdown("---")
@@ -1754,8 +1874,10 @@ if save_button:
 
             conditions = {
                 "tickers": result["final_tickers"],
-                "start_date": result["common_start"].strftime("%Y-%m-%d"),
-                "end_date": result["common_end"].strftime("%Y-%m-%d"),
+                "requested_start_date": start_date.strftime("%Y-%m-%d"),
+                "requested_end_date": end_date.strftime("%Y-%m-%d"),
+                "common_start": result["common_start"].strftime("%Y-%m-%d"),
+                "common_end": result["common_end"].strftime("%Y-%m-%d"),
             }
 
             saved_simulations[save_name.strip()] = {
