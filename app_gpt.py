@@ -2,14 +2,14 @@
 import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
-import datetime
+from datetime import datetime
 import re
 import pandas as pd
 import numpy as np
 import requests
 import base64
 import json
-from datetime import datetime
+
 
 GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
