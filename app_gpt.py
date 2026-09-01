@@ -50,9 +50,94 @@ def load_saved_simulations():
         st.error(f"저장 데이터 읽기 오류: {e}")
         return {}
 
+def save_simulations_to_github(simulations):
+    """
+    simulations 데이터를 GitHub의 simulations.json에 저장한다.
+    """
+
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+
+        url = (
+            f"https://api.github.com/repos/"
+            f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        # 현재 파일의 SHA 가져오기
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=10
+        )
+
+        if response.status_code != 200:
+            st.error(
+                f"GitHub 기존 파일 확인 실패 "
+                f"(HTTP {response.status_code})"
+            )
+            return False
+
+        sha = response.json()["sha"]
+
+        # JSON → 문자열 → Base64
+        content = json.dumps(
+            simulations,
+            ensure_ascii=False,
+            indent=2
+        )
+
+        encoded_content = base64.b64encode(
+            content.encode("utf-8")
+        ).decode("utf-8")
+
+        # GitHub 파일 업데이트
+        payload = {
+            "message": "Update saved simulations",
+            "content": encoded_content,
+            "sha": sha,
+        }
+
+        response = requests.put(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=10
+        )
+
+        if response.status_code in (200, 201):
+            return True
+
+        st.error(
+            f"GitHub 저장 실패 "
+            f"(HTTP {response.status_code})"
+        )
+        return False
+
+    except Exception as e:
+        st.error(f"GitHub 저장 오류: {e}")
+        return False
+
 saved_simulations = load_saved_simulations()
 
 st.markdown("### 📂 저장된 시뮬레이션")
+
+st.markdown("### 💾 현재 결과 저장")
+
+save_name = st.text_input(
+    "저장 이름",
+    placeholder="예: QQQ+SPY 장기 적립식",
+    key="save_simulation_name"
+)
+
+save_button = st.button(
+    "💾 현재 결과 저장",
+    use_container_width=True
+)
 
 if saved_simulations:
     saved_names = list(saved_simulations.keys())
@@ -1354,7 +1439,39 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         invested_cap = result["invested_cap"].copy()
                         contribution_series = result["contribution_series"].copy()
                         event_df = result["event_df"].copy()
+
+                    # -----------------------------------------
+                    # Save 버튼 기능
+                    # -----------------------------------------
+                    if save_button:
+
+                        if not save_name.strip():
+                            st.warning("저장 이름을 입력해주세요.")
                     
+                        elif st.session_state.get("last_backtest_result") is None:
+                            st.warning("먼저 백테스트를 실행해주세요.")
+                    
+                        else:
+                            saved_simulations = load_saved_simulations()
+                    
+                            result = st.session_state["last_backtest_result"]
+                    
+                            saved_simulations[save_name.strip()] = {
+                                "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    
+                                "result": {
+                                    "portfolio_val": result["portfolio_val"].to_dict(),
+                                    "invested_cap": result["invested_cap"].to_dict(),
+                                    "contribution_series": result["contribution_series"].to_dict(),
+                                    "event_df": result["event_df"].to_dict(),
+                                }
+                            }
+                    
+                            if save_simulations_to_github(saved_simulations):
+                                st.success(
+                                    f"'{save_name.strip()}' 저장 완료!"
+                                )
+                                st.rerun()
 
                     # -----------------------------------------
                     # 비교 종목 평가액 계산
