@@ -1740,7 +1740,7 @@ if save_button:
                     event_df[col] = event_df[col].dt.strftime("%Y-%m-%d")
 
         saved_simulations[save_name.strip()] = {
-            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
 
             "result": {
                 "portfolio_val": portfolio_val.to_dict(),
