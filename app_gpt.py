@@ -17,6 +17,7 @@ GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
 GITHUB_PORTFOLIO_FILE_PATH = "saved_data/portfolio_backtest.json"
 GITHUB_RETURN_FILE_PATH = "saved_data/return_comparison.json"
+GITHUB_MONTE_CARLO_FILE_PATH = "saved_data/monte_carlo.json"
 
 def load_saved_simulations(file_path=GITHUB_PORTFOLIO_FILE_PATH):
     """GitHub의 지정된 JSON 파일에서 저장 데이터를 읽는다."""
@@ -849,6 +850,8 @@ app_mode = st.sidebar.selectbox(
     [
         "1. 다중 종목 상대 수익률 비교 (기준 100)",
         "2. 포트폴리오 자산배분 백테스트",
+        "3. 몬테카를로 시뮬레이션 - 정규분포",
+        "4. 몬테카를로 시뮬레이션 - Bootstrap",
     ],
 )
 
@@ -889,6 +892,31 @@ def restore_saved_simulation(name, item):
             },
         }
         st.session_state["loaded_return_comparison"] = True
+
+    elif item_type == "monte_carlo":
+        st.session_state["mc_ticker_input"] = conditions.get("ticker", "")
+        if conditions.get("start_date"):
+            st.session_state["mc_start_date"] = datetime.date.fromisoformat(
+                conditions["start_date"]
+            )
+        if conditions.get("end_date"):
+            st.session_state["mc_end_date"] = datetime.date.fromisoformat(
+                conditions["end_date"]
+            )
+
+        st.session_state["mc_horizon_years"] = conditions.get(
+            "horizon_years", 10.0
+        )
+        st.session_state["mc_num_simulations"] = conditions.get(
+            "num_simulations", 10000
+        )
+        st.session_state["mc_initial_investment"] = conditions.get(
+            "initial_investment", 10000.0
+        )
+
+        # 저장 당시의 랜덤 seed를 사용해 동일한 시뮬레이션을 재현할 수 있도록 한다.
+        st.session_state["loaded_monte_carlo_seed"] = result.get("seed")
+        st.session_state["run_loaded_monte_carlo"] = True
 
     else:
         portfolio = conditions.get("portfolio", [])
@@ -943,8 +971,10 @@ def restore_saved_simulation(name, item):
 
 if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     current_save_file_path = GITHUB_RETURN_FILE_PATH
-else:
+elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     current_save_file_path = GITHUB_PORTFOLIO_FILE_PATH
+else:
+    current_save_file_path = GITHUB_MONTE_CARLO_FILE_PATH
 
 saved_simulations = load_saved_simulations(current_save_file_path)
 
@@ -960,11 +990,19 @@ if "loaded_return_comparison" not in st.session_state:
 if "loaded_portfolio_backtest" not in st.session_state:
     st.session_state["loaded_portfolio_backtest"] = False
 
+if "loaded_monte_carlo_seed" not in st.session_state:
+    st.session_state["loaded_monte_carlo_seed"] = None
+
+if "run_loaded_monte_carlo" not in st.session_state:
+    st.session_state["run_loaded_monte_carlo"] = False
+
 # 현재 선택한 기능에 맞는 저장 데이터만 표시
 if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     current_save_type = "return_comparison"
-else:
+elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     current_save_type = "portfolio_backtest"
+else:
+    current_save_type = "monte_carlo"
 
 filtered_saved_simulations = {}
 for name, item in saved_simulations.items():
@@ -1846,6 +1884,365 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
                         f"백테스트 계산 중 오류가 발생했습니다: {e}"
                     )
                 
+
+# =========================================================
+# 기능 3/4: 단일 종목 몬테카를로 시뮬레이션
+# =========================================================
+elif app_mode in (
+    "3. 몬테카를로 시뮬레이션 - 정규분포",
+    "4. 몬테카를로 시뮬레이션 - Bootstrap",
+):
+
+    is_normal_mc = app_mode == "3. 몬테카를로 시뮬레이션 - 정규분포"
+
+    if is_normal_mc:
+        st.title("🎲 몬테카를로 시뮬레이션 - 정규분포")
+        st.markdown(
+            "과거 **Adj Close 기반 로그수익률**의 평균과 표준편차를 이용해 "
+            "정규분포에서 미래 수익률을 생성하고, 여러 개의 미래 가격 경로를 시뮬레이션합니다."
+        )
+    else:
+        st.title("🎲 몬테카를로 시뮬레이션 - Historical Bootstrap")
+        st.markdown(
+            "과거 **Adj Close 기반 로그수익률을 복원추출(bootstrap)**하여 "
+            "실제 관측된 수익률 분포를 이용해 여러 개의 미래 가격 경로를 시뮬레이션합니다."
+        )
+
+    st.sidebar.header("🔍 시뮬레이션 조건 설정")
+
+    st.sidebar.subheader("📈 시뮬레이션 종목")
+    mc_ticker_input = st.sidebar.text_input(
+        "3-1. 종목",
+        value="QQQ",
+        placeholder="티커 또는 한글 종목명",
+        key="mc_ticker_input",
+    )
+    mc_ticker = resolve_ticker(mc_ticker_input)
+
+    st.sidebar.subheader("📅 과거 데이터 기간")
+    mc_default_end = datetime.date.today()
+    mc_default_start = mc_default_end - datetime.timedelta(days=365 * 5)
+
+    mc_start_date = st.sidebar.date_input(
+        "3-2. 시작 날짜",
+        mc_default_start,
+        min_value=datetime.date(1900, 1, 1),
+        max_value=datetime.date.today(),
+        key="mc_start_date",
+    )
+    mc_end_date = st.sidebar.date_input(
+        "3-3. 종료 날짜",
+        mc_default_end,
+        min_value=datetime.date(1900, 1, 1),
+        max_value=datetime.date.today(),
+        key="mc_end_date",
+    )
+
+    st.sidebar.subheader("🔮 미래 시뮬레이션 조건")
+    mc_horizon_years = st.sidebar.number_input(
+        "3-4. 미래 시뮬레이션 기간 (년)",
+        min_value=0.1,
+        max_value=50.0,
+        value=10.0,
+        step=1.0,
+        key="mc_horizon_years",
+    )
+
+    mc_num_simulations = st.sidebar.number_input(
+        "3-5. 시뮬레이션 횟수",
+        min_value=100,
+        max_value=100000,
+        value=10000,
+        step=1000,
+        key="mc_num_simulations",
+    )
+
+    mc_initial_investment = st.sidebar.number_input(
+        "3-6. 초기 투자금 ($ 또는 원)",
+        min_value=1.0,
+        value=10000.0,
+        step=1000.0,
+        key="mc_initial_investment",
+    )
+
+    st.sidebar.caption(
+        "※ 정규분포 방식은 로그수익률을 정규분포로 가정합니다. "
+        "Bootstrap 방식은 과거 로그수익률을 실제 관측값 그대로 복원추출합니다."
+    )
+
+    run_loaded_monte_carlo = st.session_state.pop(
+        "run_loaded_monte_carlo", False
+    )
+
+    if main_run_button or run_loaded_monte_carlo:
+        if not mc_ticker:
+            st.error("올바른 종목을 입력해주세요.")
+        elif mc_start_date >= mc_end_date:
+            st.error("과거 데이터 시작 날짜는 종료 날짜보다 앞서야 합니다.")
+        else:
+            with st.spinner("Yahoo Finance에서 조정가격(Adj Close)을 불러와 시뮬레이션 중..."):
+                try:
+                    mc_prices = download_adjusted_close(
+                        [mc_ticker],
+                        mc_start_date,
+                        mc_end_date,
+                    )[mc_ticker].dropna()
+
+                    if len(mc_prices) < 30:
+                        raise ValueError(
+                            "시뮬레이션에 사용할 과거 데이터가 너무 적습니다. "
+                            "최소 30개 이상의 거래일이 필요합니다."
+                        )
+
+                    mc_log_returns = np.log(mc_prices / mc_prices.shift(1)).dropna()
+
+                    if mc_log_returns.empty:
+                        raise ValueError("유효한 로그수익률을 계산할 수 없습니다.")
+
+                    initial_price = float(mc_prices.iloc[-1])
+                    n_days = max(1, int(round(float(mc_horizon_years) * 252)))
+                    n_sims = int(mc_num_simulations)
+
+                    loaded_seed = st.session_state.pop(
+                        "loaded_monte_carlo_seed", None
+                    )
+
+                    if loaded_seed is None:
+                        rng_seed = int(
+                            np.random.default_rng().integers(
+                                0, np.iinfo(np.int64).max
+                            )
+                        )
+                    else:
+                        rng_seed = int(loaded_seed)
+
+                    rng = np.random.default_rng(rng_seed)
+
+                    if is_normal_mc:
+                        mu = float(mc_log_returns.mean())
+                        sigma = float(mc_log_returns.std(ddof=1))
+
+                        simulated_returns = rng.normal(
+                            loc=mu,
+                            scale=sigma,
+                            size=(n_days, n_sims),
+                        )
+                        method_name = "정규분포"
+                    else:
+                        historical_returns = mc_log_returns.to_numpy(dtype=float)
+
+                        sampled_idx = rng.integers(
+                            0,
+                            len(historical_returns),
+                            size=(n_days, n_sims),
+                        )
+                        simulated_returns = historical_returns[sampled_idx]
+                        method_name = "Historical Bootstrap"
+
+                    # 로그수익률을 누적하여 가격 경로 생성
+                    price_paths = initial_price * np.exp(
+                        np.cumsum(simulated_returns, axis=0)
+                    )
+
+                    start_row = np.full((1, n_sims), initial_price)
+                    price_paths_with_start = np.vstack(
+                        [start_row, price_paths]
+                    )
+
+                    final_values = price_paths[-1, :] * (
+                        float(mc_initial_investment) / initial_price
+                    )
+
+                    # 요약 통계
+                    final_percentiles = np.percentile(
+                        final_values,
+                        [5, 10, 25, 50, 75, 90, 95],
+                    )
+
+                    simulated_returns_flat = simulated_returns.ravel()
+                    annualized_mean_log_return = float(mc_log_returns.mean() * 252)
+                    annualized_volatility = float(mc_log_returns.std(ddof=1) * np.sqrt(252))
+
+                    st.session_state["last_monte_carlo_result"] = {
+                        "ticker": mc_ticker,
+                        "method": method_name,
+                        "historical_start": mc_prices.index[0],
+                        "historical_end": mc_prices.index[-1],
+                        "initial_price": initial_price,
+                        "n_days": n_days,
+                        "n_sims": n_sims,
+                        "initial_investment": float(mc_initial_investment),
+                        "seed": rng_seed,
+                        "annualized_mean_log_return": annualized_mean_log_return,
+                        "annualized_volatility": annualized_volatility,
+                        "final_values": final_values,
+                        "final_percentiles": final_percentiles,
+                    }
+
+                    display_name = STOCK_DICT.get(
+                        mc_ticker, mc_ticker
+                    ).split(" (")[0]
+
+                    st.subheader("📌 시뮬레이션 조건 및 과거 통계")
+                    stat_cols = st.columns(5)
+                    stat_cols[0].metric("종목", f"{mc_ticker}")
+                    stat_cols[1].metric(
+                        "과거 데이터",
+                        f"{mc_prices.index[0].strftime('%Y-%m-%d')} ~ "
+                        f"{mc_prices.index[-1].strftime('%Y-%m-%d')}",
+                    )
+                    stat_cols[2].metric(
+                        "일평균 로그수익률",
+                        f"{mc_log_returns.mean() * 100:+.4f}%",
+                    )
+                    stat_cols[3].metric(
+                        "연환산 변동성",
+                        f"{annualized_volatility * 100:.2f}%",
+                    )
+                    stat_cols[4].metric(
+                        "시뮬레이션",
+                        f"{n_sims:,}회 / {n_days:,}일",
+                    )
+
+                    st.subheader("📈 미래 가격 경로")
+
+                    fig, ax = plt.subplots(figsize=(12, 6))
+
+                    # 전체 경로는 너무 많으므로 최대 100개만 표시
+                    sample_count = min(100, n_sims)
+                    sample_indices = np.linspace(
+                        0, n_sims - 1, sample_count, dtype=int
+                    )
+
+                    x = np.arange(n_days + 1)
+
+                    for idx in sample_indices:
+                        ax.plot(
+                            x,
+                            price_paths_with_start[:, idx],
+                            linewidth=0.8,
+                            alpha=0.18,
+                        )
+
+                    # 분위수 경계
+                    percentile_paths = np.percentile(
+                        price_paths_with_start,
+                        [5, 25, 50, 75, 95],
+                        axis=1,
+                    )
+
+                    ax.plot(
+                        x,
+                        percentile_paths[2],
+                        linewidth=2.5,
+                        label="Median (50%)",
+                    )
+                    ax.plot(
+                        x,
+                        percentile_paths[0],
+                        linestyle="--",
+                        linewidth=1.5,
+                        label="5%",
+                    )
+                    ax.plot(
+                        x,
+                        percentile_paths[4],
+                        linestyle="--",
+                        linewidth=1.5,
+                        label="95%",
+                    )
+
+                    ax.set_title(
+                        f"{mc_ticker} ({display_name}) - {method_name} "
+                        f"Future Price Paths",
+                        fontsize=15,
+                        fontweight="bold",
+                    )
+                    ax.set_xlabel("Trading Days")
+                    ax.set_ylabel("Adjusted Price")
+                    ax.legend()
+                    st.pyplot(fig)
+
+                    st.subheader("📊 최종 평가액 분포")
+
+                    fig2, ax2 = plt.subplots(figsize=(12, 5))
+                    ax2.hist(
+                        final_values,
+                        bins=60,
+                        alpha=0.8,
+                    )
+                    ax2.axvline(
+                        np.median(final_values),
+                        linestyle="--",
+                        linewidth=2,
+                        label="Median",
+                    )
+                    ax2.axvline(
+                        np.percentile(final_values, 5),
+                        linestyle=":",
+                        linewidth=1.5,
+                        label="5%",
+                    )
+                    ax2.axvline(
+                        np.percentile(final_values, 95),
+                        linestyle=":",
+                        linewidth=1.5,
+                        label="95%",
+                    )
+                    ax2.set_title(
+                        f"{mc_ticker} Final Value Distribution ({method_name})"
+                    )
+                    ax2.set_xlabel("Final Value")
+                    ax2.set_ylabel("Frequency")
+                    ax2.legend()
+                    st.pyplot(fig2)
+
+                    st.subheader("📋 최종 평가액 분위수")
+                    percentile_labels = ["5%", "10%", "25%", "50%", "75%", "90%", "95%"]
+
+                    percentile_df = pd.DataFrame(
+                        {
+                            "분위수": percentile_labels,
+                            "최종 평가액": final_percentiles,
+                            "초기 투자금 대비 수익률": (
+                                (final_percentiles / float(mc_initial_investment) - 1)
+                                * 100.0
+                            ),
+                        }
+                    )
+
+                    st.dataframe(
+                        percentile_df.style.format(
+                            {
+                                "최종 평가액": "{:,.2f}",
+                                "초기 투자금 대비 수익률": "{:+.2f}%",
+                            }
+                        ),
+                        use_container_width=True,
+                    )
+
+                    with st.expander("ℹ️ 이번 시뮬레이션의 가정"):
+                        if is_normal_mc:
+                            st.markdown(
+                                "- 과거 일별 로그수익률의 평균과 표준편차가 미래에도 유지된다고 가정합니다.\n"
+                                "- 각 거래일의 로그수익률은 서로 독립이라고 가정합니다.\n"
+                                "- 정규분포의 꼬리에서 극단적인 수익률이 나올 수 있습니다.\n"
+                                "- 가격은 `이전 가격 × exp(로그수익률)`로 계산하므로 음수가 되지 않습니다."
+                            )
+                        else:
+                            st.markdown(
+                                "- 과거 일별 로그수익률을 복원추출합니다.\n"
+                                "- 실제 관측된 수익률의 분포와 극단값을 그대로 사용할 수 있습니다.\n"
+                                "- 추출 순서는 새로 섞이므로 과거 수익률의 시간적 순서는 보존하지 않습니다.\n"
+                                "- 가격은 `이전 가격 × exp(로그수익률)`로 계산합니다."
+                            )
+
+                except Exception as e:
+                    st.error(
+                        f"몬테카를로 시뮬레이션 중 오류가 발생했습니다: {e}"
+                    )
+
+
 # -----------------------------------------
 # Save 버튼 기능
 # -----------------------------------------
@@ -1885,6 +2282,51 @@ if save_button:
             if save_simulations_to_github(
                 saved_simulations,
                 GITHUB_RETURN_FILE_PATH,
+            ):
+                st.success(f"'{save_name.strip()}' 저장 완료!")
+                st.rerun()
+
+    elif app_mode in (
+        "3. 몬테카를로 시뮬레이션 - 정규분포",
+        "4. 몬테카를로 시뮬레이션 - Bootstrap",
+    ):
+        result = st.session_state.get("last_monte_carlo_result")
+
+        if result is None:
+            st.warning("먼저 몬테카를로 시뮬레이션을 실행해주세요.")
+        else:
+            saved_simulations = load_saved_simulations(
+                GITHUB_MONTE_CARLO_FILE_PATH
+            )
+
+            conditions = {
+                "ticker": result["ticker"],
+                "method": result["method"],
+                "start_date": result["historical_start"].strftime("%Y-%m-%d"),
+                "end_date": result["historical_end"].strftime("%Y-%m-%d"),
+                "horizon_years": float(result["n_days"]) / 252.0,
+                "num_simulations": int(result["n_sims"]),
+                "initial_investment": float(result["initial_investment"]),
+            }
+
+            # 전체 가격 경로는 저장하지 않는다.
+            # 10,000회 × 수년치 경로를 JSON에 저장하면 파일이 지나치게 커질 수 있다.
+            # 대신 조건 + random seed를 저장하여 불러올 때 동일한 결과를 재현한다.
+            saved_simulations[save_name.strip()] = {
+                "type": "monte_carlo",
+                "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "conditions": conditions,
+                "result": {
+                    "seed": int(result["seed"]),
+                    "final_percentiles": [
+                        float(x) for x in result["final_percentiles"]
+                    ],
+                },
+            }
+
+            if save_simulations_to_github(
+                saved_simulations,
+                GITHUB_MONTE_CARLO_FILE_PATH,
             ):
                 st.success(f"'{save_name.strip()}' 저장 완료!")
                 st.rerun()
