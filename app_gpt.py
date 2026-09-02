@@ -15,7 +15,7 @@ st.set_page_config(page_title="통합 포트폴리오 대시보드", layout="wid
 
 GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
-GITHUB_PORTFOLIO_FILE_PATH = "saved_data/simulations.json"
+GITHUB_PORTFOLIO_FILE_PATH = "saved_data/portfolio_backtest.json"
 GITHUB_RETURN_FILE_PATH = "saved_data/return_comparison.json"
 
 def load_saved_simulations(file_path=GITHUB_PORTFOLIO_FILE_PATH):
