@@ -15,114 +15,102 @@ st.set_page_config(page_title="통합 포트폴리오 대시보드", layout="wid
 
 GITHUB_OWNER = "jason9959"
 GITHUB_REPO = "py"
-GITHUB_FILE_PATH = "saved_data/simulations.json"
+GITHUB_PORTFOLIO_FILE_PATH = "saved_data/simulations.json"
+GITHUB_RETURN_FILE_PATH = "saved_data/return_comparison.json"
 
-def load_saved_simulations():
-    
+def load_saved_simulations(file_path=GITHUB_PORTFOLIO_FILE_PATH):
+    """GitHub의 지정된 JSON 파일에서 저장 데이터를 읽는다."""
     try:
         token = st.secrets["GITHUB_TOKEN"]
-
         url = (
             f"https://api.github.com/repos/"
-            f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+            f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
         )
-
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
-
         response = requests.get(url, headers=headers, timeout=10)
 
+        # 파일이 아직 없으면 빈 저장소로 취급
+        if response.status_code == 404:
+            return {}
+
         if response.status_code != 200:
-            st.error(
-                f"GitHub 파일 읽기 실패 "
-                f"(HTTP {response.status_code})"
-            )
+            st.error(f"GitHub 파일 읽기 실패 (HTTP {response.status_code})")
             return {}
 
         data = response.json()
-
-        # GitHub API는 파일 내용을 Base64로 반환한다.
         content = base64.b64decode(data["content"]).decode("utf-8")
-
         return json.loads(content)
 
     except Exception as e:
         st.error(f"저장 데이터 읽기 오류: {e}")
         return {}
 
-def save_simulations_to_github(simulations):
-    """
-    simulations 데이터를 GitHub의 simulations.json에 저장한다.
-    """
 
+def save_simulations_to_github(
+    simulations,
+    file_path=GITHUB_PORTFOLIO_FILE_PATH,
+):
+    """GitHub의 지정된 JSON 파일에 저장 데이터를 기록한다.
+
+    파일이 이미 존재하면 SHA를 사용해 업데이트하고,
+    새 파일이면 SHA 없이 생성한다.
+    """
     try:
         token = st.secrets["GITHUB_TOKEN"]
-
         url = (
             f"https://api.github.com/repos/"
-            f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+            f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
         )
-
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
 
-        # 현재 파일의 SHA 가져오기
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=10
+        # 기존 파일이 있으면 SHA를 가져온다.
+        get_response = requests.get(
+            url, headers=headers, timeout=10
         )
 
-        if response.status_code != 200:
+        payload = {
+            "message": f"Update saved simulations: {file_path}",
+            "content": base64.b64encode(
+                json.dumps(
+                    simulations,
+                    ensure_ascii=False,
+                    indent=2,
+                ).encode("utf-8")
+            ).decode("utf-8"),
+        }
+
+        if get_response.status_code == 200:
+            payload["sha"] = get_response.json()["sha"]
+        elif get_response.status_code != 404:
             st.error(
                 f"GitHub 기존 파일 확인 실패 "
-                f"(HTTP {response.status_code})"
+                f"(HTTP {get_response.status_code})"
             )
             return False
-
-        sha = response.json()["sha"]
-
-        # JSON → 문자열 → Base64
-        content = json.dumps(
-            simulations,
-            ensure_ascii=False,
-            indent=2
-        )
-
-        encoded_content = base64.b64encode(
-            content.encode("utf-8")
-        ).decode("utf-8")
-
-        # GitHub 파일 업데이트
-        payload = {
-            "message": "Update saved simulations",
-            "content": encoded_content,
-            "sha": sha,
-        }
 
         response = requests.put(
             url,
             headers=headers,
             json=payload,
-            timeout=10
+            timeout=10,
         )
 
         if response.status_code in (200, 201):
             return True
 
-        st.error(
-            f"GitHub 저장 실패 "
-            f"(HTTP {response.status_code})"
-        )
+        st.error(f"GitHub 저장 실패 (HTTP {response.status_code})")
         return False
 
     except Exception as e:
         st.error(f"GitHub 저장 오류: {e}")
         return False
+
 
 # =========================================================
 # 주요 종목 검색용 데이터베이스
@@ -953,7 +941,12 @@ def restore_saved_simulation(name, item):
 
     st.session_state["loaded_simulation_name"] = name
 
-saved_simulations = load_saved_simulations()
+if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
+    current_save_file_path = GITHUB_RETURN_FILE_PATH
+else:
+    current_save_file_path = GITHUB_PORTFOLIO_FILE_PATH
+
+saved_simulations = load_saved_simulations(current_save_file_path)
 
 if "last_backtest_result" not in st.session_state:
     st.session_state["last_backtest_result"] = None
@@ -1031,10 +1024,10 @@ if load_button and selected_simulation:
     st.rerun()
 
 if delete_button and selected_simulation:
-    saved_simulations = load_saved_simulations()
+    saved_simulations = load_saved_simulations(current_save_file_path)
     if selected_simulation in saved_simulations:
         del saved_simulations[selected_simulation]
-        if save_simulations_to_github(saved_simulations):
+        if save_simulations_to_github(saved_simulations, current_save_file_path):
             st.success(f"'{selected_simulation}' 삭제 완료!")
             st.rerun()
 
@@ -1867,7 +1860,7 @@ if save_button:
         if result is None:
             st.warning("먼저 수익률 비교를 실행해주세요.")
         else:
-            saved_simulations = load_saved_simulations()
+            saved_simulations = load_saved_simulations(GITHUB_RETURN_FILE_PATH)
 
             indexed_df = result["indexed_df"].copy()
             indexed_df.index = indexed_df.index.strftime("%Y-%m-%d")
@@ -1889,7 +1882,10 @@ if save_button:
                 },
             }
 
-            if save_simulations_to_github(saved_simulations):
+            if save_simulations_to_github(
+                saved_simulations,
+                GITHUB_RETURN_FILE_PATH,
+            ):
                 st.success(f"'{save_name.strip()}' 저장 완료!")
                 st.rerun()
 
@@ -1899,7 +1895,7 @@ if save_button:
         if result is None:
             st.warning("먼저 백테스트를 실행해주세요.")
         else:
-            saved_simulations = load_saved_simulations()
+            saved_simulations = load_saved_simulations(GITHUB_PORTFOLIO_FILE_PATH)
 
             portfolio_val = result["portfolio_val"].copy()
             invested_cap = result["invested_cap"].copy()
@@ -1950,6 +1946,9 @@ if save_button:
                 }
             }
 
-            if save_simulations_to_github(saved_simulations):
+            if save_simulations_to_github(
+                saved_simulations,
+                GITHUB_PORTFOLIO_FILE_PATH,
+            ):
                 st.success(f"'{save_name.strip()}' 저장 완료!")
                 st.rerun()
