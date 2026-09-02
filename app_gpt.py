@@ -18,6 +18,7 @@ GITHUB_REPO = "py"
 GITHUB_PORTFOLIO_FILE_PATH = "saved_data/portfolio_backtest.json"
 GITHUB_RETURN_FILE_PATH = "saved_data/return_comparison.json"
 GITHUB_MONTE_CARLO_FILE_PATH = "saved_data/monte_carlo.json"
+GITHUB_BOOTSTRAP_FILE_PATH = "saved_data/Bootstrap.json"
 
 def load_saved_simulations(file_path=GITHUB_PORTFOLIO_FILE_PATH):
     """GitHub의 지정된 JSON 파일에서 저장 데이터를 읽는다."""
@@ -893,7 +894,7 @@ def restore_saved_simulation(name, item):
         }
         st.session_state["loaded_return_comparison"] = True
 
-    elif item_type == "monte_carlo":
+    elif item_type in ("monte_carlo", "bootstrap"):
         st.session_state["mc_ticker_input"] = conditions.get("ticker", "")
         if conditions.get("start_date"):
             st.session_state["mc_start_date"] = datetime.date.fromisoformat(
@@ -973,8 +974,10 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     current_save_file_path = GITHUB_RETURN_FILE_PATH
 elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     current_save_file_path = GITHUB_PORTFOLIO_FILE_PATH
-else:
+elif app_mode == "3. 몬테카를로 시뮬레이션 - 정규분포":
     current_save_file_path = GITHUB_MONTE_CARLO_FILE_PATH
+else:
+    current_save_file_path = GITHUB_BOOTSTRAP_FILE_PATH
 
 saved_simulations = load_saved_simulations(current_save_file_path)
 
@@ -1001,8 +1004,10 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
     current_save_type = "return_comparison"
 elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     current_save_type = "portfolio_backtest"
-else:
+elif app_mode == "3. 몬테카를로 시뮬레이션 - 정규분포":
     current_save_type = "monte_carlo"
+else:
+    current_save_type = "bootstrap"
 
 filtered_saved_simulations = {}
 for name, item in saved_simulations.items():
@@ -2295,9 +2300,17 @@ if save_button:
         if result is None:
             st.warning("먼저 몬테카를로 시뮬레이션을 실행해주세요.")
         else:
-            saved_simulations = load_saved_simulations(
+            mc_save_file_path = (
                 GITHUB_MONTE_CARLO_FILE_PATH
+                if app_mode == "3. 몬테카를로 시뮬레이션 - 정규분포"
+                else GITHUB_BOOTSTRAP_FILE_PATH
             )
+            mc_save_type = (
+                "monte_carlo"
+                if app_mode == "3. 몬테카를로 시뮬레이션 - 정규분포"
+                else "bootstrap"
+            )
+            saved_simulations = load_saved_simulations(mc_save_file_path)
 
             conditions = {
                 "ticker": result["ticker"],
@@ -2313,7 +2326,7 @@ if save_button:
             # 10,000회 × 수년치 경로를 JSON에 저장하면 파일이 지나치게 커질 수 있다.
             # 대신 조건 + random seed를 저장하여 불러올 때 동일한 결과를 재현한다.
             saved_simulations[save_name.strip()] = {
-                "type": "monte_carlo",
+                "type": mc_save_type,
                 "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "conditions": conditions,
                 "result": {
@@ -2326,7 +2339,7 @@ if save_button:
 
             if save_simulations_to_github(
                 saved_simulations,
-                GITHUB_MONTE_CARLO_FILE_PATH,
+                mc_save_file_path,
             ):
                 st.success(f"'{save_name.strip()}' 저장 완료!")
                 st.rerun()
