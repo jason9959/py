@@ -18,7 +18,7 @@ GITHUB_REPO = "py"
 GITHUB_PORTFOLIO_FILE_PATH = "saved_data/portfolio_backtest.json"
 GITHUB_RETURN_FILE_PATH = "saved_data/return_comparison.json"
 GITHUB_MONTE_CARLO_FILE_PATH = "saved_data/monte_carlo.json"
-GITHUB_BOOTSTRAP_FILE_PATH = "saved_data/Bootstrap.json"
+GITHUB_BOOTSTRAP_FILE_PATH = "saved_data/bootstrap.json"
 
 def load_saved_simulations(file_path=GITHUB_PORTFOLIO_FILE_PATH):
     """GitHub의 지정된 JSON 파일에서 저장 데이터를 읽는다."""
@@ -1348,7 +1348,7 @@ if app_mode == "1. 다중 종목 상대 수익률 비교 (기준 100)":
                     )
 
                 st.subheader("최근 지수화 데이터 (기준일 = 100)")
-                st.dataframe(indexed_df.tail(10))
+                st.dataframe(indexed_df)
 
             except Exception as e:
                 st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
@@ -2065,8 +2065,18 @@ elif app_mode in (
                     )
 
                     simulated_returns_flat = simulated_returns.ravel()
-                    annualized_mean_log_return = float(mc_log_returns.mean() * 252)
-                    annualized_volatility = float(mc_log_returns.std(ddof=1) * np.sqrt(252))
+
+                    # 과거 일일 로그수익률 통계
+                    daily_mean = float(mc_log_returns.mean())
+                    daily_variance = float(mc_log_returns.var(ddof=1))
+                    daily_std = float(mc_log_returns.std(ddof=1))
+                    daily_median = float(mc_log_returns.median())
+                    daily_min = float(mc_log_returns.min())
+                    daily_max = float(mc_log_returns.max())
+                    daily_skewness = float(mc_log_returns.skew())
+
+                    annualized_mean_log_return = daily_mean * 252
+                    annualized_volatility = daily_std * np.sqrt(252)
 
                     st.session_state["last_monte_carlo_result"] = {
                         "ticker": mc_ticker,
@@ -2108,6 +2118,48 @@ elif app_mode in (
                         "시뮬레이션",
                         f"{n_sims:,}회 / {n_days:,}일",
                     )
+
+                    st.subheader("📊 과거 일일 로그수익률 분포")
+
+                    stat_cols2 = st.columns(6)
+                    stat_cols2[0].metric("평균", f"{daily_mean * 100:+.4f}%")
+                    stat_cols2[1].metric("분산", f"{daily_variance:.8f}")
+                    stat_cols2[2].metric("표준편차", f"{daily_std * 100:.4f}%")
+                    stat_cols2[3].metric("중앙값", f"{daily_median * 100:+.4f}%")
+                    stat_cols2[4].metric("최솟값", f"{daily_min * 100:+.2f}%")
+                    stat_cols2[5].metric("최댓값", f"{daily_max * 100:+.2f}%")
+
+                    st.caption(
+                        f"왜도(Skewness): {daily_skewness:+.3f}  |  "
+                        f"관측 거래일: {len(mc_log_returns):,}일"
+                    )
+
+                    fig_return_dist, ax_return_dist = plt.subplots(figsize=(12, 5))
+                    ax_return_dist.hist(
+                        mc_log_returns.to_numpy(dtype=float) * 100.0,
+                        bins=80,
+                        alpha=0.8,
+                    )
+                    ax_return_dist.axvline(
+                        daily_mean * 100.0,
+                        linestyle="--",
+                        linewidth=2,
+                        label=f"평균 {daily_mean * 100:+.4f}%",
+                    )
+                    ax_return_dist.axvline(
+                        daily_median * 100.0,
+                        linestyle=":",
+                        linewidth=2,
+                        label=f"중앙값 {daily_median * 100:+.4f}%",
+                    )
+                    ax_return_dist.set_title(
+                        f"{mc_ticker} Historical Daily Log Return Distribution "
+                        f"({method_name})"
+                    )
+                    ax_return_dist.set_xlabel("Daily Log Return (%)")
+                    ax_return_dist.set_ylabel("Frequency")
+                    ax_return_dist.legend()
+                    st.pyplot(fig_return_dist)
 
                     st.subheader("📈 미래 가격 경로")
 
