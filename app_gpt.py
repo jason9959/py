@@ -389,9 +389,9 @@ def map_schedule_to_data_dates(data_index, first_date, freq):
     if freq == "매일":
         return set(data_index[1:])
 
-    if freq == "매월":
+    if freq in ("월간", "매월"):
         months = 1
-    elif freq == "매분기":
+    elif freq in ("분기", "매분기"):
         months = 3
     elif freq == "반기":
         months = 6
@@ -1371,6 +1371,7 @@ elif app_mode == "2. 포트폴리오 자산배분 백테스트":
     invest_type = st.sidebar.selectbox(
         "투자 방식을 선택하세요:",
         ["거치식", "적립식"],
+        key="invest_type",
     )
 
     st.sidebar.markdown("---")
